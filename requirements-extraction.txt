@@ -1,0 +1,2 @@
+-r requirements-backend.txt
+pdfplumber>=0.11.9,<0.12
