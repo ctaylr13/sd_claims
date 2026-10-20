@@ -8,6 +8,9 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.venv/
+__pycache__/
+*.pyc
 dist
 dist-ssr
 *.local
@@ -25,8 +28,12 @@ dist-ssr
 
 # Private claim data, credentials, and generated evidence
 /Security Deposit Claims*.csv
+/security_deposit_claims.csv
 /data/
 /cache/
+/local-backup/
+/Security Deposit Itemization Documents*/
+/Security Deposit Itemization Documents*.zip
 /credentials/
 /secrets/
 .env
