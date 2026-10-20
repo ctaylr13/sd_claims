@@ -1,0 +1,18 @@
+.git
+node_modules
+dist
+dist-ssr
+*.log
+
+# Private claim data, credentials, and generated evidence
+Security Deposit Claims*.csv
+data
+cache
+credentials
+secrets
+.env
+.env.*
+*.local
+*.sqlite
+*.sqlite3
+*.db
