@@ -35,3 +35,5 @@ dist-ssr
 *.sqlite
 *.sqlite3
 *.db
+
+/docs/roadmap.md
