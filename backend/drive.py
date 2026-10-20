@@ -14,18 +14,12 @@ SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def add_drive_arguments(parser):
-    parser.add_argument('--sources', type=Path, default=REPO_ROOT / 'drive-sources.json')
-    parser.add_argument('--client-secret', type=Path, default=REPO_ROOT / 'credentials/drive-oauth-client.json')
-    parser.add_argument('--token', type=Path, default=REPO_ROOT / 'secrets/drive-token.json')
-
-
-def connect_from_args(args):
-    sources = json.loads(args.sources.read_text())
+def load_sources(path=REPO_ROOT / 'drive-sources.json'):
+    sources = json.loads(path.read_text())
     for key in ('claims_file_id', 'evidence_root_folder_id'):
         if not isinstance(sources.get(key), str) or not sources[key].strip():
             raise ValueError(f'Drive sources must contain {key}')
-    return connect_drive(args.client_secret, args.token), sources
+    return sources
 
 
 def file_metadata(service, file_id):
@@ -85,7 +79,7 @@ def write_json(path, value, mode=0o600):
     temporary.replace(path)
 
 
-def connect_drive(client_path, token_path):
+def connect_drive(client_path, token_path, *, allow_interactive=True):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
@@ -96,14 +90,20 @@ def connect_drive(client_path, token_path):
         credentials = Credentials.from_authorized_user_file(str(token_path))
         if not credentials.has_scopes(SCOPES):
             credentials = None
+    changed = False
     if credentials and credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
+        changed = True
     if not credentials or not credentials.valid:
+        if not allow_interactive:
+            raise ValueError('Drive authorization required; authorize with a command-line Drive tool first')
         if not client_path.is_file():
-            raise ValueError(f'Download a Desktop app OAuth client JSON to {client_path} first. See README.md.')
+            raise ValueError(f'Download a Desktop app OAuth client JSON to {client_path} first')
         flow = InstalledAppFlow.from_client_secrets_file(str(client_path), SCOPES)
         credentials = flow.run_local_server(port=0, prompt='consent')
-    write_json(token_path, json.loads(credentials.to_json()))
+        changed = True
+    if changed:
+        write_json(token_path, json.loads(credentials.to_json()))
     return build('drive', 'v3', credentials=credentials, cache_discovery=False)
 
 
