@@ -1,13 +1,19 @@
 .git
 node_modules
+.venv
+__pycache__
+*.pyc
 dist
 dist-ssr
 *.log
 
 # Private claim data, credentials, and generated evidence
 Security Deposit Claims*.csv
+security_deposit_claims.csv
 data
 cache
+local-backup
+Security Deposit Itemization Documents*
 credentials
 secrets
 .env
