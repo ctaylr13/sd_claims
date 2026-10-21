@@ -1,17 +1,24 @@
+import json
 from threading import Lock
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
+from .batches import BatchProgress, BatchRequest, create_batch, run_batch
 from .claims import LookupError, SOURCE_UNAVAILABLE_MESSAGE, lookup_claim, lookup_claims
 from .drive import REPO_ROOT, connect_drive, load_sources
 from .schemas import BatchLookupRequest, BatchLookupResponse, ClaimResponse, ErrorResponse
+from .storage import LocalStore
 
 app = FastAPI(title='Claims lookup API', version='0.1.0')
 authorization_lock = Lock()
+
+
+def get_store():
+    return LocalStore(REPO_ROOT / 'cache/extraction')
 
 
 def get_drive():
@@ -50,7 +57,7 @@ async def lookup_error(request: Request, error: LookupError):
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, error: RequestValidationError):
     return error_response(LookupError('invalid_request', 422,
-                                     'Supply tracking_numbers as 1–100 strings or a comma-separated list'))
+                                     'Request does not match the endpoint schema; see /docs'))
 
 
 @app.exception_handler(HTTPException)
@@ -62,6 +69,40 @@ async def http_error(request: Request, error: HTTPException):
 @app.get('/api/health')
 def health():
     return {'status': 'ok'}
+
+
+@app.post('/api/batches', response_model=BatchProgress, status_code=202)
+def submit_batch(body: BatchRequest, background: BackgroundTasks,
+                 store: Annotated[LocalStore, Depends(get_store)]):
+    progress = create_batch(store, body)
+    background.add_task(run_batch, progress['batch_id'], body, store.root)
+    return progress
+
+
+def require_batch(store, batch_id):
+    progress = store.batch(batch_id)
+    if progress is None:
+        raise LookupError('batch_not_found', 404, 'Batch not found')
+    return progress
+
+
+@app.get('/api/batches/{batch_id}', response_model=BatchProgress)
+def batch_progress(batch_id: str, store: Annotated[LocalStore, Depends(get_store)]):
+    return require_batch(store, batch_id)
+
+
+@app.get('/api/batches/{batch_id}/claims/{index}/result')
+def batch_result(batch_id: str, index: int, store: Annotated[LocalStore, Depends(get_store)]):
+    progress = require_batch(store, batch_id)
+    if not 0 <= index < len(progress['results']):
+        raise LookupError('claim_not_found', 404, 'Batch claim index not found')
+    result = progress['results'][index]
+    if result['state'] != 'succeeded':
+        raise LookupError('result_unavailable', 409, 'Claim has no completed result')
+    path = store.result_for_attempt(result['attempt'])
+    if path is None:
+        raise LookupError('result_unavailable', 409, 'Result artifacts require an explicit retry')
+    return json.loads(path.read_text())
 
 
 @app.post('/api/claims/lookup', response_model=BatchLookupResponse,

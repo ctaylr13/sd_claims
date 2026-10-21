@@ -71,3 +71,56 @@ Its private baseline is `data/ocr-155-validation.json`; it is not a passing scan
 fixture or evidence of reliable table extraction. Universal scan support and
 broad OCR comparisons are deferred; only specific blockers for this slice belong
 in follow-up fixes.
+
+Local Prefect batches wrap `extract_claim` and use the same `cache/extraction`
+store. FastAPI is pinned to 0.150.0 to share one environment with Prefect 3.9:
+
+```sh
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+The API runs the flow directly in a background thread; Prefect starts its
+temporary local server. The flow uses local settings with no Prefect Cloud
+credentials/API URL and disables telemetry. No deployment, worker, or separately
+managed Prefect service is required.
+
+Submit 1–20 unique claim manifests to `POST /api/batches`:
+
+```json
+{
+  "claims": [
+    {
+      "claim_id": "local-example",
+      "documents": [
+        {"document_id": "ledger", "kind": "ledger", "path": "/absolute/path/ledger.pdf"}
+      ]
+    }
+  ],
+  "retry": false
+}
+```
+
+Use absolute document paths; relative paths resolve from the API working directory.
+The API validates the whole request before accepting it. A `202` response returns
+`batch_id` and queued progress. Poll `GET /api/batches/{batch_id}` for totals and
+ordered per-claim states; fetch a verified report at
+`GET /api/batches/{batch_id}/claims/{index}/result` (zero-based index).
+Results with missing or modified artifacts return `409`.
+
+Claims run sequentially; an extraction exception fails only that claim and later
+claims continue. `completed` means every claim was attempted, including failures.
+A successful extraction can still contain diagnostic errors and review items.
+Successful requests reuse existing verified artifacts. Resubmit the manifests
+with `retry: true` to explicitly retry failed/interrupted/damaged extraction jobs;
+Prefect retries and result caching are disabled so the local store owns reuse.
+
+Progress survives API restarts, but background execution is not a durable queue.
+Process termination can leave batches queued/running; inspect and resubmit them.
+An orchestration failure marks the batch failed with a sanitized error.
+One API process serializes batches with a local lock. Run a single API worker on
+a trusted local machine: this endpoint can read local manifest paths. Production
+hosting, distributed workers, restart recovery and concurrency tuning are deferred.
+
+The batch tests include a real Prefect flow in the main environment. That test
+requires local loopback access for Prefect's temporary server.

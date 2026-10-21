@@ -44,6 +44,26 @@ class LocalStore:
                 attempt TEXT NOT NULL, result_path TEXT, inventory_json TEXT, error TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )''')
+            connection.execute('''CREATE TABLE IF NOT EXISTS batches (
+                id TEXT PRIMARY KEY, progress_json TEXT NOT NULL
+            )''')
+
+    def save_batch(self, progress):
+        with self.connect() as connection:
+            connection.execute('''INSERT INTO batches (id, progress_json) VALUES (?, ?)
+                ON CONFLICT(id) DO UPDATE SET progress_json = excluded.progress_json''',
+                               (progress['batch_id'], canonical_bytes(progress).decode()))
+
+    def batch(self, batch_id):
+        with self.connect() as connection:
+            row = connection.execute('SELECT progress_json FROM batches WHERE id = ?', (batch_id,)).fetchone()
+        return json.loads(row['progress_json']) if row else None
+
+    def result_for_attempt(self, attempt):
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM jobs WHERE attempt = ? AND state = 'succeeded'",
+                                     (attempt,)).fetchone()
+        return self._result(row) if row else None
 
     @contextmanager
     def connect(self):
