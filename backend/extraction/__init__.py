@@ -3,24 +3,49 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backend.storage import LocalStore, digest
+
 from .facts import fact, money
 from .financial import ledger, move_out, shared_fields
 from .lease import effective_rent, lease
 from .models import Document, DocumentFacts, Manifest, Observation
-from .pdf import extract_pdf
+from .pdf import extract_pdf, extraction_tools
+
+PARSER_VERSION = 'rules-0.2'
+SCHEMA_VERSION = 'extraction-0.2'
+CONFIG_VERSION = 'pdf-0.1'
 
 PARSERS = {'ledger': ledger, 'move_out_statement': move_out, 'lease': lease, 'renewal': lease}
 
 
-def extract_claim(manifest: Manifest, output_root: Path):
+def extract_claim(manifest: Manifest, output_root: Path, *, retry=False):
+    contents = []
+    request = manifest.model_dump(mode='json')
+    for item, reference in zip(manifest.documents, request['documents']):
+        try:
+            content = Path(item.path).read_bytes()
+        except OSError:
+            content = None
+        contents.append(content)
+        reference['sha256'] = digest(content) if content is not None else None
+    tools = extraction_tools()
+    request.update(parser_version=PARSER_VERSION, schema_version=SCHEMA_VERSION,
+                   config_version=CONFIG_VERSION, tools=tools)
+    if any(content is None for content in contents):
+        request['unavailable_source_attempt'] = uuid.uuid4().hex
+    store = LocalStore(output_root)
+    return store.run(request, lambda directory: _extract_claim(manifest, directory, contents, tools), retry=retry)
+
+
+def _extract_claim(manifest: Manifest, run_dir: Path, contents, tools):
     from .validation import validate_report
 
-    run_dir = output_root.resolve() / uuid.uuid4().hex
-    run_dir.mkdir(parents=True, mode=0o700)
     documents = []
     for index, item in enumerate(manifest.documents):
         try:
-            doc = extract_pdf(item, run_dir / f'document-{index+1}')
+            if contents[index] is None:
+                raise OSError('Source unavailable when request was captured')
+            doc = extract_pdf(item, run_dir / f'document-{index+1}', content=contents[index], tools=tools)
         except OSError as error:
             doc = Document(document_id=item.document_id, kind=item.kind, sha256=None, original_path=None,
                            source={**item.source, 'requested_local_path': item.path},
@@ -40,8 +65,8 @@ def extract_claim(manifest: Manifest, output_root: Path):
     request = fact(requests, unavailable=any(result.document.errors or
                    any(page.state == 'unreadable' for page in result.document.pages) for result in documents))
     report = {
-        'schema_version': 'extraction-0.2', 'claim_id': manifest.claim_id,
-        'created_at': datetime.now(timezone.utc).isoformat(), 'parser_version': 'rules-0.2',
+        'schema_version': SCHEMA_VERSION, 'config_version': CONFIG_VERSION, 'claim_id': manifest.claim_id,
+        'created_at': datetime.now(timezone.utc).isoformat(), 'parser_version': PARSER_VERSION,
         'documents': [result.model_dump(mode='json') for result in documents],
         'requested_insurer_reimbursement': request.model_dump(mode='json'),
         'effective_on': manifest.effective_on,
@@ -51,7 +76,7 @@ def extract_claim(manifest: Manifest, output_root: Path):
         'limitations': ['Development extraction; no adjudication or independently validated accuracy.',
                         'Missing states describe supported-pattern search scope, not absence of evidence everywhere.',
                         'Confirmation labels are source assertions, not independent verification.',
-                        'Receipt before decision is unverified. No model provider or durable job store selected.'],
+                        'Receipt before decision is unverified. No model provider selected.'],
     }
     report_path = run_dir / 'report.json'
     report_path.write_text(json.dumps(report, indent=2) + '\n')
