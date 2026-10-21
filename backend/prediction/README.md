@@ -100,3 +100,40 @@ fixtures exercise allowed facts, rejected fields/sources/sections, every lineage
 reference, receipt/cutoff uncertainty, changed versions/values, unknown states,
 snapshot mutation, evaluator access, and isolation of candidate 53. They confer no
 approvals on live evidence.
+
+## Local experiments
+
+Install `requirements-prediction.txt` for the planned scikit-learn experiments.
+Neither experiment runner is imported by the lookup API or prediction CLI.
+
+`python -m backend.prediction.experiment PLAN --output REPORT` uses reviewed
+snapshots and evaluation-only keys. `DevelopmentPlan` requires explicit reserved
+IDs, disjoint train/validation claim groups, and claim-specific artifact paths.
+It never loads a final test split. The review-only baseline in `baseline.py`
+provides no approval or covered-loss rule.
+
+`python -m backend.prediction.retrospective ROOT --output REPORT` is a separate
+exploratory current-sheet workflow. ROOT contains `reservation.json`,
+`development-source.json` and `test-context-source.json`. The loader checks exact
+header positions, bounded development-only ranges and claim identities against
+the reservation before building features. Policy text is used only to exclude
+test contexts. Property addresses define group hashes, never features. Outcome
+fields are labels only. Source and code hashes, fold assignments, metrics and
+interpretations are retained in the report. Output files must not already exist.
+
+The retrospective runner does not issue fact approvals, change historical
+eligibility, or establish pre-decision availability. It performs schema/status
+and amount-consistency review, not independent re-adjudication. Both runners
+keep recommendations advisory. Private datasets, research and approach decisions
+remain under the ignored data directory; no model is served by the API.
+
+`python -m backend.prediction.tuning ROOT --protocol PROTOCOL` freezes a tuning
+protocol against the existing `evaluation.json` and source fingerprints.
+Then run the same command with `--output REPORT` to compare parameters,
+duration/calendar features and decision cutoffs inside nested property-group
+development folds. The outer folds and later-date development claims retain
+their earlier assignments; only inner training folds select settings/cutoffs.
+Changing the frozen protocol or source bytes fails validation. This workflow
+has no reserved-data loader and reports scoring coverage separately from the
+advisory-use policy. Protocol and report output paths must not already exist
+when they are created.
