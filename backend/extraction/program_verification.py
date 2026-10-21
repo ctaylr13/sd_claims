@@ -27,7 +27,13 @@ def read_program_document(source: DocumentInput, expected_sha256: str):
         for number, page in enumerate(pdf.pages, 1):
             if page.bbox[0] or page.bbox[1]:
                 raise ValueError('Nonzero page origin')
-            readable = not fallback_reason(page, native_words(page)) and number not in source.force_ocr_pages
+            words = native_words(page)
+            readable = not fallback_reason(page, words) and number not in source.force_ocr_pages
+            image_context = any(image['width']*image['height'] > page.width*page.height*.2
+                                for image in getattr(page, 'images', ()))
+            outlined_context = len(getattr(page, 'curves', ())) > 100 and len(words) < 100
+            if image_context or outlined_context:
+                readable = False
             records, audits = read_waiver_cells(page) if readable else ([], [])
             for record in records:
                 record['citation'] = Citation(document_id=source.document_id, sha256=expected_sha256,
@@ -37,7 +43,10 @@ def read_program_document(source: DocumentInput, expected_sha256: str):
                                      page.extract_text() or '', re.I):
                 candidates.append({'key':'program_monthly_fee', 'value':money(match.group(1))})
             pages[number] = {'size':[page.width,page.height], 'readable':bool(readable),
-                             'records':records, 'audits':audits}
+                             'records':records, 'audits':audits,
+                             'review_reason':'image_context_requires_visual_review' if image_context else
+                                             'outlined_context_requires_visual_review' if outlined_context else
+                                             'source_not_readable' if not readable else None}
     incomplete = not pages or any(not p['readable'] for p in pages.values())
     holds = {}
     for key in PROGRAM_KEYS:

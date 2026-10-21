@@ -25,7 +25,8 @@ def white(color):
 def read_chars(chars, region):
     raw = [c for c in chars if region[0] <= (c['x0']+c['x1'])/2 <= region[2]
            and region[1] <= (c['top']+c['bottom'])/2 <= region[3]]
-    visible = [c for c in raw if c['text'] != '_' and not white(c.get('non_stroking_color'))]
+    visible = [c for c in raw if c['text'] != '_' and not c['text'].isspace()
+               and not white(c.get('non_stroking_color'))]
     rows = []
     for char in sorted(visible, key=lambda c: (c['top'], c['x0'])):
         if rows and abs(char['top']-rows[-1][0]['top']) <= 2:
@@ -76,12 +77,24 @@ def canonical_quote(value):
     return re.sub(r'[+-]?\d+(?:\.\d+)?', lambda m: format(Decimal(m.group()), '.2f'), value)
 
 
+def monthly_amount(content, mapping):
+    amount = amount_in_cell(content, mapping)
+    if amount:
+        return amount
+    match = re.fullmatch(r'\$\s+per\s+month\s*\n(?P<amount>\$\s*-?[\d,]+(?:\.\d{2})?)\s*', content, re.I)
+    if match:
+        start, end = match.span('amount')
+        return amount_in_cell(content[start:end], mapping[start:end])
+    return None
+
+
 def read_waiver_cells(source):
     cells = [c for table in source.find_tables() for c in table.cells]
     headers = []
     for region in cells:
         text = source.crop(region).extract_text() or ''
-        if re.fullmatch(r'security deposit waiver\s*\(must check one\)', ' '.join(text.split()), re.I):
+        if re.fullmatch(r'(?:lease addendum for )?security deposit waiver\s*\(must check one\)',
+                        ' '.join(text.split()), re.I):
             headers.append(region)
     records, audits = [], []
     for header in headers:
@@ -92,11 +105,25 @@ def read_waiver_cells(source):
             if not re.search(r'\bper\s+month\b', fee_text, re.I):
                 continue
             no_rows = [c for c in cells if abs(c[0]-monthly[0])<1 and abs(c[2]-monthly[2])<1 and abs(c[1]-monthly[3])<1]
-            if len(no_rows) != 1 or not 18 <= monthly[0]-header[0] <= 120:
+            yes_labels = [c for c in cells if abs(c[2]-monthly[0])<1
+                          and abs(c[1]-monthly[1])<1 and abs(c[3]-monthly[3])<1
+                          and 18 <= c[2]-c[0] <= 120]
+            if len(no_rows) != 1 or len(yes_labels) > 1:
                 continue
             no_row, = no_rows
-            regions = {'yes': [header[0],monthly[1],monthly[0],monthly[3]],
-                       'no': [header[0],no_row[1],monthly[0],no_row[3]],
+            if yes_labels:
+                yes_label, = yes_labels
+                no_labels = [c for c in cells if abs(c[0]-yes_label[0])<1 and abs(c[2]-yes_label[2])<1
+                             and abs(c[1]-no_row[1])<1 and abs(c[3]-no_row[3])<1]
+                if len(no_labels) != 1:
+                    continue
+                no_label, = no_labels
+            elif 18 <= monthly[0]-header[0] <= 120:
+                yes_label = [header[0],monthly[1],monthly[0],monthly[3]]
+                no_label = [header[0],no_row[1],monthly[0],no_row[3]]
+            else:
+                continue
+            regions = {'yes': yes_label, 'no': no_label,
                        'description': [monthly[2],monthly[1],header[2],monthly[3]]}
             parts = {name: read_chars(source.chars, region) for name,region in regions.items()}
             selected = []
@@ -113,12 +140,12 @@ def read_waiver_cells(source):
             label_text, label_map, label_audit = parts[option]
             label_chars = [c for c in label_map if c and c['text'].strip()]
             context = '\n'.join((label_text,fee_text,parts['description'][0]))
-            context_box = [header[0],monthly[1],header[2],monthly[3]] if option=='yes' else regions['no']
+            context_box = [yes_label[0],monthly[1],header[2],monthly[3]] if option=='yes' else regions['no']
             records.append({'key':'program_election','value':option,'quote':label_text.strip(),
                             'bbox':box(label_chars),'context':context,'context_bbox':context_box,'cell_proof':audit})
             if option != 'yes':
                 continue
-            fee = amount_in_cell(fee_text, fee_map)
+            fee = monthly_amount(fee_text, fee_map)
             if fee:
                 records.append({'key':'program_monthly_fee',**fee,'context':context,
                                 'context_bbox':context_box,'cell_proof':audit})

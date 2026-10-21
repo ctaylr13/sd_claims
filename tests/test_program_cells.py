@@ -73,6 +73,34 @@ class ProgramCellsTests(unittest.TestCase):
         self.assertNotEqual(canonical_quote('$-50'),canonical_quote('$50'))
         self.assertNotEqual(canonical_quote('$50'),canonical_quote('$500'))
 
+    def test_blank_overlay_spaces_do_not_split_touching_digits(self):
+        content = chars('$        ',10)+chars('69',15,11)
+        self.assertEqual(self.read_amount(content)['value'],'69.00')
+
+    def test_extra_gutter_uses_adjacent_label_cells(self):
+        page = source()
+        original = page.find_tables()[0].cells
+        header = (10,10,550,30)
+        cells = [header]+[(a+50,b,c+50,d) for a,b,c,d in original[1:]]
+        for char in page.chars:
+            char['x0'] += 50
+            char['x1'] += 50
+        page.find_tables = lambda:[SimpleNamespace(cells=cells)]
+        page.crop = lambda region:SimpleNamespace(extract_text=lambda:'Security Deposit Waiver (must check one)' if region==header else '')
+        self.assertEqual([r['value'] for r in read_waiver_cells(page)[0]],['yes','50.00','2850.00'])
+
+    def test_alternate_exact_header_and_split_currency_placeholder(self):
+        page = source(fee='$ per month')
+        page.chars.extend(chars('$51.00',110,55))
+        header = page.find_tables()[0].cells[0]
+        page.crop = lambda region:SimpleNamespace(extract_text=lambda:'Lease Addendum for Security Deposit Waiver (must check one)' if region==header else '')
+        self.assertEqual([r['value'] for r in read_waiver_cells(page)[0]],['yes','51.00','2850.00'])
+
+    def test_two_filled_currency_lines_do_not_choose_the_later_value(self):
+        page = source(fee='$50 per month')
+        page.chars.extend(chars('$51.00',110,55))
+        self.assertNotIn('program_monthly_fee',[r['key'] for r in read_waiver_cells(page)[0]])
+
 
 if __name__=='__main__':
     unittest.main()

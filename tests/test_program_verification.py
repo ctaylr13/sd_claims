@@ -102,6 +102,21 @@ class ProgramVerificationTests(unittest.TestCase):
             self.assertEqual(result['holds']['program_election'],'incomplete_document_context')
             self.assertTrue(all(r['status']=='needs_review' for r in verify_program_proposals([proposal()],result,1)))
 
+    def test_large_image_blocks_acceptance_despite_readable_native_overlay(self):
+        page=self.page()
+        page.images=[{'width':500,'height':400}]
+        result=self.capture([page])
+        self.assertEqual(result['pages'][1]['review_reason'],'image_context_requires_visual_review')
+        self.assertFalse(result['pages'][1]['records'])
+        self.assertEqual(result['holds']['program_election'],'incomplete_document_context')
+
+    def test_outlined_body_routes_to_review_but_small_logo_does_not(self):
+        page=self.page();page.curves=[{}]*101
+        result=self.capture([page])
+        self.assertEqual(result['pages'][1]['review_reason'],'outlined_context_requires_visual_review')
+        page=self.page();page.images=[{'width':100,'height':30}]
+        self.assertEqual(self.capture([page])['holds'],{})
+
 
 if __name__=='__main__':
     unittest.main()
