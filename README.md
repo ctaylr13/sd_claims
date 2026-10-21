@@ -2,6 +2,9 @@
 
 Work in progress. Public documentation and walkthrough will be added at the end.
 
+Experimental extraction findings and the recommendation evaluation boundary are
+documented in [RESEARCH.md](RESEARCH.md).
+
 Local extraction stores versioned results in SQLite and private artifact files:
 
 ```sh

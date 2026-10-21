@@ -137,3 +137,25 @@ Changing the frozen protocol or source bytes fails validation. This workflow
 has no reserved-data loader and reports scoring coverage separately from the
 advisory-use policy. Protocol and report output paths must not already exist
 when they are created.
+
+`python -m backend.prediction.recommendation_comparison ROOT EVIDENCE --protocol PROTOCOL`
+freezes a paired current-record comparison. Repeat with `--output REPORT` to run
+the fixed decision tree and amount regressor on the existing development folds,
+using spreadsheet features alone versus the same features plus cited document facts.
+The evidence JSON contains `sources`, `facts` and `excluded_claim_ids`; sources bind
+claim ID, role, path and SHA-256. Facts follow `ResearchFact` in
+`research_documents.py`. Only lease, ledger and native waiver fields are accepted.
+Source bytes, citation identity and development/reserved membership are checked.
+This research adapter does not issue historical fact approvals or establish receipt
+before a decision. Unknown facts have no numeric value, duplicate keys become
+conflicting, and citations and identifiers never become features.
+
+Reports include identical-cohort benchmarks, document coverage, separate historical
+decision mistakes and conditional amount errors, fold identities, protocol hashes
+and the refitted selected model. Approval-only subsets have null decline recall and
+balanced accuracy. Source-study selection and reused development folds limit the
+conclusions; these scores do not represent an untouched final test or independently
+verified insurance correctness. The comparison does not load reserved outcomes.
+The selected spreadsheet model can be exported with `recommendations train` and
+loaded through the existing hash-checked recommendation CLI. The API/UI integration
+is a separate step from completing this research comparison.
