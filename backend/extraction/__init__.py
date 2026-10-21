@@ -11,8 +11,8 @@ from .lease import effective_rent, lease
 from .models import Document, DocumentFacts, Manifest, Observation
 from .pdf import extract_pdf, extraction_tools
 
-PARSER_VERSION = 'rules-0.2'
-SCHEMA_VERSION = 'extraction-0.2'
+PARSER_VERSION = 'rules-0.3'
+SCHEMA_VERSION = 'extraction-0.3'
 CONFIG_VERSION = 'pdf-0.1'
 
 PARSERS = {'ledger': ledger, 'move_out_statement': move_out, 'lease': lease, 'renewal': lease}
@@ -70,8 +70,10 @@ def _extract_claim(manifest: Manifest, run_dir: Path, contents, tools):
         'documents': [result.model_dump(mode='json') for result in documents],
         'requested_insurer_reimbursement': request.model_dump(mode='json'),
         'effective_on': manifest.effective_on,
+        'review_regions': [region.model_dump(mode='json') for region in manifest.review_regions],
         'effective_monthly_rent': effective_rent(documents, manifest.effective_on).model_dump(mode='json'),
-        'validation': validate_report(documents),
+        'validation': validate_report(documents, review_regions=[region.model_dump(mode='json')
+                                                                for region in manifest.review_regions]),
         'training_eligible': False, 'review_required': True,
         'limitations': ['Development extraction; no adjudication or independently validated accuracy.',
                         'Missing states describe supported-pattern search scope, not absence of evidence everywhere.',

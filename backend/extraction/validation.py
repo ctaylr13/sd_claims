@@ -125,7 +125,8 @@ def ledger_arithmetic(result, *, order=None, regions=()):
         if blocked(current.running_balance, regions) or blocked(previous.running_balance, regions):
             checks.append(check('running_balance', 'skipped', reason='Source balance cropped or unreadable', **references))
             continue
-        change, before, after = delta(current), decimal_value(previous.running_balance), decimal_value(current.running_balance)
+        change = None if blocked(current.amount, regions) else delta(current)
+        before, after = decimal_value(previous.running_balance), decimal_value(current.running_balance)
         expected = before+change if before is not None and change is not None else None
         checks.append(numeric_check('running_balance', expected, after, **references))
     if entries:
@@ -134,7 +135,8 @@ def ledger_arithmetic(result, *, order=None, regions=()):
                                     None if blocked(latest.running_balance, regions) else decimal_value(latest.running_balance),
                                     entry=latest.entry_id))
         oldest = entries[-1] if order == 'newest_first' else entries[0]
-        opening, change = decimal_value(result.fields.get('opening_balance')), delta(oldest)
+        opening = decimal_value(result.fields.get('opening_balance'))
+        change = None if blocked(oldest.amount, regions) else delta(oldest)
         checks.append(numeric_check('opening_balance_to_first_row',
                                     opening+change if opening is not None and change is not None else None,
                                     None if blocked(oldest.running_balance, regions) else decimal_value(oldest.running_balance),
@@ -142,26 +144,94 @@ def ledger_arithmetic(result, *, order=None, regions=()):
     return checks
 
 
-def statement_arithmetic(result):
+def statement_arithmetic(result, *, regions=()):
+    def operand(field):
+        return None if field is None or blocked(field, regions) else decimal_value(field)
+
     checks = []
     for kind, total_name in [('charge', 'total_charges'), ('credit', 'total_credits'), ('deposit', 'total_deposits')]:
         entries = [entry for entry in result.entries if entry.kind == kind]
-        amounts = [decimal_value(entry.amount) for entry in entries]
+        amounts = [operand(entry.amount) for entry in entries]
         total = sum(amounts, Decimal('0.00')) if amounts and None not in amounts else None
-        checks.append(numeric_check(f'{kind}_lines_match_total', total, decimal_value(result.fields.get(total_name)),
+        checks.append(numeric_check(f'{kind}_lines_match_total', total, operand(result.fields.get(total_name)),
                                     entries=[entry.entry_id for entry in entries]))
-    charges = decimal_value(result.fields.get('total_charges'))
-    credits = decimal_value(result.fields.get('total_credits'))
-    deposits = decimal_value(result.fields.get('total_deposits'))
+    charges = operand(result.fields.get('total_charges'))
+    credits = operand(result.fields.get('total_credits'))
+    deposits = operand(result.fields.get('total_deposits'))
     # Only one explicit deduction basis -- held deposits are not another credit.
-    deduction = credits if credits is not None and deposits is None else deposits if deposits is not None and credits is None else None
+    has_credits = value(result.fields.get('total_credits')) is not None
+    has_deposits = value(result.fields.get('total_deposits')) is not None
+    deduction = credits if has_credits and not has_deposits else deposits if has_deposits and not has_credits else None
     net = charges-deduction if charges is not None and deduction is not None else None
-    due, refund = decimal_value(result.fields.get('tenant_balance_due')), decimal_value(result.fields.get('resident_refund'))
-    if due is not None and refund is not None:
+    due, refund = operand(result.fields.get('tenant_balance_due')), operand(result.fields.get('resident_refund'))
+    if value(result.fields.get('tenant_balance_due')) is not None and value(result.fields.get('resident_refund')) is not None:
         checks.append(check('net_due', 'skipped', reason='Both resident refund and tenant balance are populated'))
     else:
         checks.append(numeric_check('net_due', net, due if due is not None else -refund if refund is not None else None))
     return checks
+
+
+def review_rows(result, checks, issues, regions):
+    doc = result.document
+    pages = {page.number: page for page in doc.pages}
+    global_reasons = [item['check'] for item in checks
+                      if item['check'] in ('source_hash', 'citation_integrity', 'review_region_source')
+                      and item['status'] != 'passed']
+    global_reasons.extend(item['check'] + '_failed' for item in checks
+                          if item['status'] == 'failed' and 'entry' not in item and 'entries' not in item)
+    global_reasons.extend(doc.errors)
+    rows = []
+
+    def append_row(row_id, citations, reasons, amount=None, page=None):
+        reasons = list(dict.fromkeys(global_reasons + reasons))
+        rows.append({'row_id': row_id, 'status': 'Needs review' if reasons else 'Extracted',
+                     'amount': None if reasons else amount, 'reasons': reasons,
+                     'document_id': doc.document_id, 'sha256': doc.sha256, 'page': page,
+                     'citations': [cite.model_dump(mode='json') for cite in citations]})
+
+    for entry in result.entries:
+        citations = entry.citations + [cite for name in ('amount', 'posting_date', 'running_balance', 'service_period')
+                                       for cite in field_citations(getattr(entry, name))]
+        reasons = []
+        for cite in citations:
+            page = pages.get(cite.page)
+            if page is None or page.state == 'unreadable' or page.errors:
+                reasons.append('source_page_unreadable_or_failed')
+            if cite.method == 'ocr':
+                reasons.append('ocr_requires_visual_review')
+            for region in regions:
+                if cite.page == region['page'] and intersects(cite.bbox, region['bbox']):
+                    reasons.append('source_' + region['state'] + ': ' + region['reason'])
+        required = ['amount'] + (['posting_date', 'running_balance'] if doc.kind == 'ledger' else [])
+        for name in required:
+            if value(getattr(entry, name)) is None:
+                reasons.append(name + '_not_established')
+        if entry.kind == 'unclassified':
+            reasons.append('row_kind_not_established')
+        for issue in issues:
+            if (issue.get('entry') == entry.entry_id or entry.entry_id in issue.get('entries', [])
+                    or issue.get('field', '').startswith(entry.entry_id + '.')):
+                reasons.append(issue['code'])
+        for item in checks:
+            if item['status'] == 'failed' and (item.get('entry') == entry.entry_id
+                                             or entry.entry_id in item.get('entries', [])):
+                reasons.append(item['check'] + '_failed')
+        append_row(entry.entry_id, citations, reasons, value(entry.amount),
+                   citations[0].page if citations else None)
+    for index, cite in enumerate(result.unparsed, 1):
+        append_row(f'{doc.document_id}:unparsed:{index}', [cite], ['unparsed_source_region'], page=cite.page)
+    for index, region in enumerate(regions, 1):
+        append_row(f'{doc.document_id}:region:{index}', [],
+                   ['source_' + region['state'] + ': ' + region['reason']], page=region['page'])
+        rows[-1]['bbox'] = region['bbox']
+    for page in doc.pages:
+        if page.state == 'unreadable' or page.errors or page.method == 'ocr':
+            append_row(f'{doc.document_id}:p{page.number}:review', [],
+                       ['ocr_requires_visual_review'] if page.method == 'ocr' and page.state != 'unreadable'
+                       else ['source_page_unreadable_or_failed'], page=page.number)
+    if global_reasons and not rows:
+        append_row(f'{doc.document_id}:review', [], [])
+    return rows
 
 
 def validate_document(result, *, regions=(), order=None):
@@ -171,6 +241,17 @@ def validate_document(result, *, regions=(), order=None):
     checks.append(check('source_hash', 'passed' if actual_hash and actual_hash == doc.sha256 else 'failed',
                         expected=doc.sha256, observed=actual_hash))
     pages = {page.number: page for page in doc.pages}
+    valid_regions = []
+    for region in regions:
+        page = pages.get(region['page'])
+        x0, y0, x1, y1 = region['bbox']
+        valid = (region.get('sha256', doc.sha256) == doc.sha256 and page is not None
+                 and 0 <= x0 < x1 <= page.width and 0 <= y0 < y1 <= page.height)
+        checks.append(check('review_region_source', 'passed' if valid else 'failed', region=region,
+                            reason='Region must match retained source hash, page and bounds'))
+        if valid:
+            valid_regions.append(region)
+    regions = valid_regions
     citations = {cite.model_dump_json(): cite for cite in all_citations(result)}
     bad_citations = []
     for cite in citations.values():
@@ -238,8 +319,9 @@ def validate_document(result, *, regions=(), order=None):
     if doc.kind == 'ledger':
         checks.extend(ledger_arithmetic(result, order=order, regions=regions))
     if doc.kind == 'move_out_statement':
-        checks.extend(statement_arithmetic(result))
+        checks.extend(statement_arithmetic(result, regions=regions))
     return {'document_id': doc.document_id, 'sha256': doc.sha256, 'checks': checks, 'issues': issues,
+            'rows': review_rows(result, checks, issues, regions),
             'status': 'review_required' if issues or any(c['status'] != 'passed' for c in checks) else 'checks_passed_within_scope',
             'source_visual_accuracy': 'not_established_by_automated_checks'}
 
@@ -300,10 +382,11 @@ def annotation_checks(results, annotations):
     return checks
 
 
-def validate_report(results, annotations=()):
+def validate_report(results, annotations=(), *, review_regions=()):
     documents = []
     for result in results:
         regions = [item for item in annotations if item['type'] == 'unreadable_region' and item['sha256'] == result.document.sha256]
+        regions += [item for item in review_regions if item['document_id'] == result.document.document_id]
         documents.append(validate_document(result, regions=regions))
     copies = defaultdict(list)
     for result, validation in zip(results, documents):
@@ -311,7 +394,7 @@ def validate_report(results, annotations=()):
             copies[result.document.sha256].append(result.document.document_id)
     duplicates = [{'sha256': sha, 'documents': ids, 'action': 'Preserve source occurrences; do not add repeated assertions'}
                   for sha, ids in copies.items() if len(ids) > 1]
-    return {'validation_version': 'checks-0.1', 'status': 'review_required',
+    return {'validation_version': 'checks-0.2', 'status': 'review_required',
             'documents': documents, 'duplicate_documents': duplicates,
             'source_page_checks': annotation_checks(results, annotations),
             'independent_human_validation': False, 'reliable_ocr_table_extraction': 'not_established',
@@ -331,7 +414,7 @@ def main():
     report = json.loads(args.report.read_text())
     results = [DocumentFacts.model_validate(item) for item in report['documents']]
     annotations = json.loads(args.annotations.read_text())['annotations'] if args.annotations else []
-    validation = validate_report(results, annotations)
+    validation = validate_report(results, annotations, review_regions=report.get('review_regions', []))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(validation, indent=2)+'\n')
     print(args.output.resolve())

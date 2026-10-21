@@ -1,3 +1,4 @@
+from math import isfinite
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -119,17 +120,36 @@ class DocumentInput(Model):
         return self
 
 
+class ReviewRegion(Model):
+    document_id: str = Field(min_length=1)
+    sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    page: int = Field(ge=1)
+    bbox: tuple[float, float, float, float]
+    state: Literal['cropped', 'unreadable', 'unreliable']
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def valid_bounds(self):
+        x0, y0, x1, y1 = self.bbox
+        if not (all(isfinite(number) for number in self.bbox) and 0 <= x0 < x1 and 0 <= y0 < y1):
+            raise ValueError('Review region must have positive bounds in page points')
+        return self
+
+
 class Manifest(Model):
     claim_id: str = Field(min_length=1)
     documents: list[DocumentInput] = Field(min_length=1)
     effective_on: str | None = None
     recorded_requests: list[CellCitation] = Field(default_factory=list)
+    review_regions: list[ReviewRegion] = Field(default_factory=list)
 
     @model_validator(mode='after')
     def unique_documents(self):
         ids = [doc.document_id for doc in self.documents]
         if len(ids) != len(set(ids)):
             raise ValueError('document_id must be unique within a claim')
+        if any(region.document_id not in ids for region in self.review_regions):
+            raise ValueError('Review region document_id must be included in the manifest')
         if self.effective_on:
             from datetime import date
             self.effective_on = date.fromisoformat(self.effective_on).isoformat()
