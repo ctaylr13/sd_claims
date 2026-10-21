@@ -15,7 +15,7 @@ from backend.extraction import extract_claim
 from backend.extraction.facts import fact, money
 from backend.extraction.financial import ledger, move_out
 from backend.extraction.lease import effective_rent, lease
-from backend.extraction.models import CellCitation, DocumentInput, Manifest, Observation, Word
+from backend.extraction.models import CellCitation, DocumentInput, Manifest, Observation, ReviewRegion, Word
 from backend.extraction.pdf import extract_pdf, ocr_words
 
 
@@ -307,6 +307,39 @@ class ExtractionTests(unittest.TestCase):
             self.assertEqual(money(raw), expected)
         for raw in ('$1,00', '$12.999', '0O.00', '(12.00'):
             self.assertIsNone(money(raw))
+
+    def test_integrated_mixed_scan_review_and_region_cache_invalidation(self):
+        doc = self.pdf([(30, 750, 'Charges'), (30, 720, 'Cleaning $100.00'),
+                        (30, 690, 'Amount Due $100.00')],
+                       next_pages=[[(30, 750, 'Unusable scanned text')]])
+        item = DocumentInput(path=doc.original_path, document_id='mixed', kind='move_out_statement',
+                             source={'id': 'source', 'version': '7'}, force_ocr_pages=[2])
+        manifest = Manifest(claim_id='synthetic', documents=[item])
+        ocr = [Word(text='Charges', bbox=(30, 30, 80, 40), confidence=99),
+               Word(text='Cleaning', bbox=(30, 60, 90, 70), confidence=99),
+               Word(text='$200.00', bbox=(480, 60, 530, 70), confidence=99)]
+        with patch('backend.extraction.pdf.ocr_words', return_value=ocr) as run_ocr:
+            # extract_pdf binds its default callable at import time.
+            with patch('backend.extraction.extract_pdf', side_effect=lambda *args, **kwargs:
+                       extract_pdf(*args, ocr=run_ocr, **kwargs)):
+                first = extract_claim(manifest, self.root / 'integrated')
+                report = json.loads(first.read_text())
+                document = report['documents'][0]['document']
+                self.assertEqual([page['method'] for page in document['pages']], ['native_text', 'ocr'])
+                self.assertEqual(document['source'], {'id': 'source', 'version': '7'})
+                rows = report['validation']['documents'][0]['rows']
+                self.assertEqual(rows[0]['status'], 'Extracted')
+                self.assertEqual(rows[1]['status'], 'Needs review')
+                self.assertIsNone(rows[1]['amount'])
+                self.assertEqual(report['documents'][0]['entries'][1]['amount']['observations'][0]['value'], '200.00')
+                self.assertEqual(extract_claim(manifest, self.root / 'integrated'), first)
+                manifest.review_regions = [ReviewRegion(document_id='mixed', sha256=doc.sha256, page=1,
+                                                       bbox=(0, 50, 612, 90), state='cropped', reason='Clipped amount')]
+                second = extract_claim(manifest, self.root / 'integrated')
+                self.assertNotEqual(second, first)
+                revised = json.loads(second.read_text())['validation']['documents'][0]['rows']
+                self.assertEqual(revised[0]['status'], 'Needs review')
+                self.assertIsNone(revised[0]['amount'])
 
     def test_blank_request_and_zero_request_are_distinct(self):
         def request(raw):

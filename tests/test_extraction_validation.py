@@ -82,6 +82,77 @@ class ExtractionValidationTests(unittest.TestCase):
         flag = next(issue for issue in validation['issues'] if issue['code'] == 'source_cropped')
         self.assertIsNone(flag['value'])
         self.assertEqual(result.entries[1].running_balance.observations[0].value, '75.00')
+        self.assertTrue(all(row['status'] == 'Needs review' for row in validation['rows']))
+        self.assertTrue(all(row['amount'] is None for row in validation['rows']))
+
+    def test_row_review_preserves_native_values_and_citations(self):
+        result = self.document([('2025-01-01', '100.00', '100.00', 'charge'),
+                                ('2025-01-02', '25.00', '75.00', 'payment')])
+        before = result.model_dump_json()
+        rows = validate_document(result)['rows']
+        self.assertEqual([row['status'] for row in rows], ['Extracted', 'Extracted'])
+        self.assertEqual([row['amount'] for row in rows], ['100.00', '25.00'])
+        self.assertEqual(rows[0]['citations'][0], result.entries[0].citations[0].model_dump(mode='json'))
+        self.assertEqual(result.model_dump_json(), before)
+
+    def test_failed_arithmetic_rows_need_review_without_rewriting_values(self):
+        result = self.document([('2025-01-01', '100.00', '100.00', 'charge'),
+                                ('2025-01-02', '25.00', '95.00', 'payment')])
+        rows = validate_document(result)['rows']
+        self.assertTrue(all(row['status'] == 'Needs review' for row in rows))
+        self.assertTrue(all(row['amount'] is None for row in rows))
+        self.assertEqual(result.entries[1].running_balance.observations[0].value, '95.00')
+
+    def test_stale_review_region_fails_closed(self):
+        result = self.document([('2025-01-01', '100.00', '100.00', 'charge')])
+        region = dict(document_id='synthetic', sha256='a'*64, page=1, bbox=[535, 90, 600, 150],
+                      state='cropped', reason='Missing right edge')
+        validation = validate_report([result], review_regions=[region])['documents'][0]
+        self.assertEqual(validation['status'], 'review_required')
+        self.assertEqual(validation['rows'][0]['status'], 'Needs review')
+        self.assertIn('review_region_source', validation['rows'][0]['reasons'])
+
+    def test_cropped_amount_is_not_used_in_arithmetic(self):
+        result = self.document([('2025-01-01', '100.00', '100.00', 'charge'),
+                                ('2025-01-02', '25.00', '75.00', 'payment')])
+        region = dict(page=1, bbox=[475, 120, 530, 140], state='cropped', reason='Partial amount')
+        checks = ledger_arithmetic(result, regions=[region])
+        self.assertEqual(checks[0]['status'], 'skipped')
+        result = self.document([('2025-01-01', '100.00', '100.00', 'charge')],
+                               kind='move_out_statement', fields={'total_charges': '100.00'})
+        region['bbox'] = [425, 95, 480, 115]
+        self.assertEqual(statement_arithmetic(result, regions=[region])[0]['status'], 'skipped')
+
+    def test_out_of_bounds_review_region_forces_review(self):
+        result = self.document([('2025-01-01', '100.00', '100.00', 'charge')])
+        region = dict(page=1, bbox=[535, 90, 700, 150], state='cropped', reason='Wrong bounds')
+        validation = validate_document(result, regions=[region])
+        self.assertEqual(validation['rows'][0]['status'], 'Needs review')
+        self.assertIn('review_region_source', validation['rows'][0]['reasons'])
+
+    def test_unreadable_page_and_unparsed_rows_have_explicit_fallback(self):
+        result = self.document()
+        result.document.pages[0].state = 'unreadable'
+        rows = validate_document(result)['rows']
+        self.assertEqual(rows[0]['status'], 'Needs review')
+        self.assertIsNone(rows[0]['amount'])
+        self.assertEqual(rows[0]['page'], 1)
+        result.document.pages[0].state = 'readable'
+        cite = Citation(document_id='synthetic', sha256=self.sha, page=1,
+                        quote='Unreliable row', bbox=(30, 100, 580, 120), method='native_text')
+        result.unparsed.append(cite)
+        self.assertEqual(validate_document(result)['rows'][0]['citations'], [cite.model_dump(mode='json')])
+
+    def test_high_confidence_ocr_rows_still_require_visual_review(self):
+        result = self.document([('2025-01-01', '100.00', '100.00', 'charge')])
+        result.document.pages[0].method = 'ocr'
+        for field in (result.entries[0].amount, result.entries[0].posting_date, result.entries[0].running_balance):
+            for obs in field.observations:
+                for cite in obs.citations:
+                    cite.method = 'ocr'
+        rows = validate_document(result)['rows']
+        self.assertTrue(all(row['status'] == 'Needs review' for row in rows))
+        self.assertIn('ocr_requires_visual_review', rows[0]['reasons'])
 
     def test_unparsed_gap_blocks_reconciliation_across_missing_row(self):
         result = self.document([('2025-01-01', '100.00', '100.00', 'charge'),
