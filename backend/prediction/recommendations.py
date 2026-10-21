@@ -17,6 +17,7 @@ from .models import FrozenModel
 from .retrospective import (DATES, MONEY, TOLERANCE, estimators, file_hash, load_rows,
                             recorded_date, recorded_money, row_features)
 from .snapshots import digest
+from .research_documents import document_features
 from .tuning import dataset, pipeline_for
 
 VERSION = 'current-record-recommendations-3'
@@ -63,7 +64,7 @@ class ModelArtifact(FrozenModel):
 def code_hashes():
     return {name: file_hash(Path(__file__).with_name(name)) for name in (
         'recommendations.py', 'artifacts.py', 'retrospective.py', 'tuning.py',
-        'experiment.py', 'baseline.py')}
+        'experiment.py', 'baseline.py', 'research_documents.py')}
 
 
 def fit_models(cohort, train):
@@ -80,7 +81,7 @@ def fit_models(cohort, train):
     return export_models(decision, ceiling, labels, majority)
 
 
-def recommend(models, request):
+def recommend(models, request, *, document_facts=None):
     request = ResearchInput.model_validate(request)
     unexpected = set(request.values) - INPUT_COLUMNS
     if unexpected:
@@ -112,6 +113,8 @@ def recommend(models, request):
     if not str(values.get('Termination Type') or '').strip():
         reasons.append('termination_missing')
     feature_values = row_features(values)
+    if document_facts is not None:
+        feature_values = document_features(feature_values, request.claim_id, document_facts)
     if not any(name in feature_values for name in MONEY.values()) and not any(dates.values()) and not str(
             values.get('Termination Type') or '').strip():
         blockers.append('no_usable_inputs')
