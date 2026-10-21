@@ -48,21 +48,27 @@ def ocr_words(image_path, width, height, image_size, *, executable='tesseract'):
     return words
 
 
-def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words):
-    content = Path(item.path).read_bytes()
+def extraction_tools():
+    tools = {name: version(name) for name in ('pdfplumber', 'pypdfium2')}
+    if shutil.which('tesseract'):
+        try:
+            tools['tesseract'] = subprocess.run(['tesseract', '--version'], capture_output=True,
+                                                 text=True, check=True, timeout=10).stdout.splitlines()[0]
+        except (OSError, subprocess.SubprocessError, IndexError):
+            tools['tesseract'] = 'version_unavailable'
+    return tools
+
+
+def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, content=None, tools=None):
+    if content is None:
+        content = Path(item.path).read_bytes()
     digest = hashlib.sha256(content).hexdigest()
     artifact_dir.mkdir(parents=True, exist_ok=False)
     original = artifact_dir / 'original.pdf'
     original.write_bytes(content)
     doc = Document(document_id=item.document_id, kind=item.kind, sha256=digest,
                    original_path=str(original.resolve()), source=item.source,
-                   tools={'pdfplumber': version('pdfplumber'), 'pypdfium2': version('pypdfium2')})
-    if shutil.which('tesseract'):
-        try:
-            doc.tools['tesseract'] = subprocess.run(['tesseract', '--version'], capture_output=True,
-                                                   text=True, check=True, timeout=10).stdout.splitlines()[0]
-        except (OSError, subprocess.SubprocessError, IndexError):
-            doc.tools['tesseract'] = 'version_unavailable'
+                   tools=extraction_tools() if tools is None else tools)
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             if any(number > len(pdf.pages) for number in item.force_ocr_pages):
