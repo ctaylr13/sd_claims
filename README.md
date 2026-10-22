@@ -189,8 +189,9 @@ matrix, matched-subset ceiling errors and benchmarks, scoring coverage, and the
 independent-review boundary. Per-claim evaluation records are excluded. These
 metrics do not establish independent correctness or final-test performance.
 
-The lookup results include a comparison table. Generate one recommendation or
-all found claims to keep predictions alongside recorded status, approved amount,
+Multi-claim lookup results show predictions, recorded status, and conditional
+ceilings in a compact table. Generate a recommendation for the selected claim or
+all found claims. Expand a claim’s recorded comparison for its approved amount,
 decision match, and dollar difference. Generated results persist while opening
 other claims; a new lookup starts a new comparison. Both the table and the
 selected claim use the same result. Batch generation reads the live source once
@@ -206,16 +207,16 @@ recorded amount within its available recorded limit, plus a non-withheld ceiling
 Absolute percentage error uses the recorded amount as its denominator; zero,
 missing, invalid, declined, and inconsistent targets are not assigned zero error.
 
-The comparison view also surfaces the configured development evaluation's decision
-agreement and decline recall. These are historical model-level measurements on
-reused development folds, not calibrated probabilities for individual claims.
-Current-lookup matches may include training claims and are labeled separately.
-No per-claim confidence percentage is manufactured from tree decisions or amount
-errors. The existing independent-correctness boundary remains unchanged.
+Model-level agreement and decline recall are available in the Model evaluation
+tab. They measure historical agreement on reused development folds, not per-claim
+confidence or independently verified correctness. Single-claim lookups open the
+claim directly; multiple claims use a compact results table. Recorded inputs,
+source provenance, historical comparisons, and recommendation diagnostics remain
+available in expandable sections.
 
 Lookup, recommendation requests, and batch submission show animated loading bars
-while awaiting an API response. Recommendation coverage and extraction batches
-show actual processed counts and percentages, with ready/succeeded and failed
-counts listed separately. Loading bars do not invent intermediate percentages for
+while awaiting an API response. Completed recommendation requests show ready and
+failed counts. Extraction batches show actual processed counts and percentages,
+with succeeded and failed counts listed separately. Loading bars do not invent intermediate percentages for
 requests that return all results at once. Motion is disabled when the device
 requests reduced animation.
