@@ -11,7 +11,7 @@ import { Badge, Button, Code, Copy, Definition, Details, Field, Heading, Link, L
 const ClaimReview = ({ claim, recommendation, onGenerate, busy }: { claim: Claim; recommendation: RecommendationState | null; onGenerate: () => void; busy: boolean }) => <Stack>
   <Panel>
     <Spread><Heading>Claim {claim.tracking_number}</Heading><Badge data-state="Needs review">Needs review</Badge></Spread>
-    {claim.claims_source.mode === 'local_csv' && <Notice>Local CSV: {claim.claims_source.name}. Drive evidence is unavailable in this mode. Use Document review for local PDFs.</Notice>}
+    {claim.claims_source.mode === 'local_csv' && <Notice>Local CSV: {claim.claims_source.name}. Downloaded PDFs appear below when configured. Use Document review to extract their contents.</Notice>}
     <Details><Summary>Recorded claim details</Summary><Stack>
       <Copy>These recorded inputs have not been independently verified.</Copy>
       <Definition>{Object.entries(claim.prediction_inputs).map(([key, field]) => <Fragment key={key}><Term>{label(key)}</Term><Value>{field.recorded_value || 'Missing'}</Value></Fragment>)}</Definition>
@@ -23,9 +23,9 @@ const ClaimReview = ({ claim, recommendation, onGenerate, busy }: { claim: Claim
   <Panel>
     <Spread><Heading>Evidence</Heading><Badge>{claim.evidence.items.length} items</Badge></Spread>
     {claim.evidence.state === 'missing' && <Notice>No evidence folder was found. Request source documents before reviewing this claim.</Notice>}
-    {claim.evidence.folder && <Link href={`https://drive.google.com/drive/folders/${encodeURIComponent(claim.evidence.folder.id)}`} target="_blank" rel="noreferrer">Open evidence folder ↗</Link>}
+    {claim.evidence.folder && claim.claims_source.mode !== 'local_csv' && <Link href={`https://drive.google.com/drive/folders/${encodeURIComponent(claim.evidence.folder.id)}`} target="_blank" rel="noreferrer">Open evidence folder ↗</Link>}
     {!claim.evidence.items.length && claim.evidence.state !== 'missing' && <Copy>The evidence folder is empty.</Copy>}
-    {claim.evidence.items.length > 0 && <Details><Summary>Documents · {claim.evidence.items.length}</Summary><List>{claim.evidence.items.map(item => <Row key={item.id}><Link href={driveUrl(item.id)} target="_blank" rel="noreferrer">{item.name} ↗</Link><Small>{item.mimeType?.split('/').at(-1)}</Small></Row>)}</List></Details>}
+    {claim.evidence.items.length > 0 && <Details><Summary>Documents · {claim.evidence.items.length}</Summary><List>{claim.evidence.items.map(item => <Row key={item.id}><Link href={item.webViewLink ?? driveUrl(item.id)} target="_blank" rel="noreferrer">{item.name} ↗</Link><Small>{item.mimeType?.split('/').at(-1)}</Small></Row>)}</List></Details>}
   </Panel>
   <Panel><Details>
     <Summary>Recorded outcome and comparison</Summary>
@@ -115,7 +115,7 @@ export const Lookup = () => {
         <Field>Tracking numbers<Textarea value={input} onChange={event => setInput(event.target.value)} rows={2} placeholder={'e.g. 14, 18, or 20-25'} required aria-describedby="lookup-help" /></Field>
         <Spread><Small id="lookup-help">Separate numbers or numeric ranges with commas or new lines. Up to 100 unique claims.</Small><Button disabled={busy} type="submit">{busy ? 'Looking up claims…' : 'Find claims'}</Button></Spread>
       </Stack></form>
-      {busy && <WorkflowProgress label="Looking up claims" completed={null} total={1} detail="Reading claim records and supporting evidence from live sources." />}
+      {busy && <WorkflowProgress label="Looking up claims" completed={null} total={1} detail="Reading claim records and supporting evidence from the configured sources." />}
       {error && <Notice role="alert">{error}</Notice>}
     </Panel>
     {results.length > 0 && <LookupResults key={lookupId} results={results} selected={selected} onSelect={setSelected} />}

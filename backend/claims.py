@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .diagnostics import log_exception
 from .drive import FOLDER_MIME, inventory_claim, list_children, parse_claims, read_claims
+from .local_evidence import inventory_local_claim
 
 INPUT_FIELDS = {
     'Claim Date': 'claim_date', 'Lease Start Date': 'lease_start_date',
@@ -48,7 +49,7 @@ def load_claim_index(service, sources, tracking_number=None):
     for item in ([] if local_path else list_children(service, sources['evidence_root_folder_id'])):
         if item['mimeType'] == FOLDER_MIME:
             folders[item['name'].strip()].append(item)
-    return records, source, folders
+    return records, source, folders, sources.get('local_evidence_root')
 
 
 def find_record(records, tracking_number):
@@ -60,19 +61,23 @@ def find_record(records, tracking_number):
     return matches[0]
 
 
-def find_claim(service, tracking_number, records, source, folders):
+def find_claim(service, tracking_number, records, source, folders, local_evidence_root=None):
     row = find_record(records, tracking_number)
-    matches_folders = folders.get(tracking_number, [])
-    if len(matches_folders) > 1:
-        raise LookupError('duplicate_evidence_folders', 409, 'Multiple evidence folders require review')
-    evidence = inventory_claim(service, matches_folders[0]) if matches_folders else {'folder': None, 'items': []}
+    if source.get('mode') == 'local_csv':
+        evidence = (inventory_local_claim(local_evidence_root, tracking_number)
+                    if local_evidence_root else {'folder': None, 'items': []})
+    else:
+        matches_folders = folders.get(tracking_number, [])
+        if len(matches_folders) > 1:
+            raise LookupError('duplicate_evidence_folders', 409, 'Multiple evidence folders require review')
+        evidence = inventory_claim(service, matches_folders[0]) if matches_folders else {'folder': None, 'items': []}
     return {
         'tracking_number': tracking_number, 'claims_source': source,
         'prediction_inputs': {name: {'recorded_value': row.get(column, ''), 'source_column': column,
                                      'availability': 'decision_time_unverified'}
                               for column, name in INPUT_FIELDS.items()},
         'historical_outcome': {column: row.get(column, '') for column in OUTCOME_FIELDS},
-        'evidence': {**evidence, 'state': 'present' if matches_folders else 'missing'},
+        'evidence': {**evidence, 'state': 'present' if evidence['folder'] else 'missing'},
         'training_eligible': False,
     }
 
