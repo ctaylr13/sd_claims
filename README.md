@@ -127,3 +127,95 @@ hosting, distributed workers, restart recovery and concurrency tuning are deferr
 
 The batch tests include a real Prefect flow in the main environment. That test
 requires local loopback access for Prefect's temporary server.
+
+## Review workspace
+
+Run the API above and `npm run dev`, then open `http://localhost:5173`.
+Vite proxies `/api` to the local backend on port 8000. `npm run build` checks
+TypeScript and creates the production frontend; `npm run lint` checks React code.
+A production host must serve `dist/` and proxy `/api` to the same trusted local API.
+
+- **Claim lookup:** enter up to 100 tracking numbers separated by commas or lines.
+  Numeric ranges such as `14-25` expand inclusively; overlapping entries are
+  deduplicated. Reversed ranges and requests exceeding 100 unique claims are rejected.
+  Results retain individual errors, unverified recorded inputs, evidence links,
+  and historical outcomes in a separate collapsed section.
+- **Document review:** paste a JSON array of 1–20 claim manifests (or the API's
+  `{ "claims": [...] }` envelope). Document paths are on the API machine.
+  Progress polls every 1.5 seconds while queued/running. The last batch ID is
+  remembered locally; any saved ID can be loaded manually. Polling errors offer
+  refresh without resubmission. Explicit retry is a separate checkbox when
+  submitting manifests; loading a batch never restarts work.
+- **Results and evidence:** select a successful extraction to fetch its verified
+  report. Expand fields to inspect raw/normalized values, competing observations,
+  limitations, and citations. Citation buttons open the retained page image with the cited region highlighted,
+  alongside its quote, hash, and page-point coordinates. Page controls navigate
+  the document; a separate link opens the retained PDF at the cited page. The document
+  endpoint verifies the stored artifact inventory and only serves the original
+  PDF inside the selected attempt. Failed checks and unknown row amounts remain
+  explicit. The workspace does not issue fact approvals or claim decisions.
+
+Research recommendations are optional and use the existing current-record model.
+Install `requirements-prediction.txt`, train/export a model using the
+`backend.prediction.recommendations train` CLI, and generate aggregate metrics
+with its `evaluate` CLI (see `backend/prediction/README.md`). Set these environment
+variables on the API process, or save them in the repository’s private `.env`
+file. The API loads `.env` on startup without overriding existing process variables:
+
+```sh
+export RECOMMENDATION_MODEL_PATH=/absolute/path/model.json
+export RECOMMENDATION_MODEL_SHA256=<sha256-of-model-json>
+export RECOMMENDATION_EVALUATION_PATH=/absolute/path/evaluation.json
+export RECOMMENDATION_EVALUATION_SHA256=<sha256-of-evaluation-json>
+```
+
+Use `shasum -a 256 /absolute/path/file.json` to inspect an artifact hash. No
+model/report is auto-selected from private experiment directories. Missing,
+changed, or incompatible artifacts produce an explicit unavailable state.
+
+`POST /api/claims/{tracking_number}/recommendation` freshly reads the claim and
+passes only the allowlisted recorded input columns to the hash/code-verified
+model. Historical outcomes and evidence filenames are not model inputs. Reserved
+claims and robustness candidate 53 are rejected. All outputs remain needs-review,
+including research decisions and conditional approved ceilings. Missing ceilings
+are displayed as unavailable, never zero; missing limits retain an explicit
+unbounded advisory. Extracted document observations are not silently promoted to
+approved model inputs.
+
+`GET /api/review/metrics` serves only aggregate fields from a verified
+`recommendations evaluate` report with development-only scope and no reserved
+outcomes loaded. It exposes historical agreement, decline recall, a confusion
+matrix, matched-subset ceiling errors and benchmarks, scoring coverage, and the
+independent-review boundary. Per-claim evaluation records are excluded. These
+metrics do not establish independent correctness or final-test performance.
+
+The lookup results include a comparison table. Generate one recommendation or
+all found claims to keep predictions alongside recorded status, approved amount,
+decision match, and dollar difference. Generated results persist while opening
+other claims; a new lookup starts a new comparison. Both the table and the
+selected claim use the same result. Batch generation reads the live source once
+and verifies the model once, preserving individual lookup, reserved-claim, and
+recommendation failures.
+
+Historical comparisons are attached **after** inference using outcomes from the
+same fresh lookup as the recommendation inputs. They never become model inputs.
+Only Approved, Approved Revised, Posted, and Declined statuses have a decision
+comparison; contradictory decline/positive-amount records stay unscored.
+Conditional amount comparisons require an approved outcome with a positive valid
+recorded amount within its available recorded limit, plus a non-withheld ceiling.
+Absolute percentage error uses the recorded amount as its denominator; zero,
+missing, invalid, declined, and inconsistent targets are not assigned zero error.
+
+The comparison view also surfaces the configured development evaluation's decision
+agreement and decline recall. These are historical model-level measurements on
+reused development folds, not calibrated probabilities for individual claims.
+Current-lookup matches may include training claims and are labeled separately.
+No per-claim confidence percentage is manufactured from tree decisions or amount
+errors. The existing independent-correctness boundary remains unchanged.
+
+Lookup, recommendation requests, and batch submission show animated loading bars
+while awaiting an API response. Recommendation coverage and extraction batches
+show actual processed counts and percentages, with ready/succeeded and failed
+counts listed separately. Loading bars do not invent intermediate percentages for
+requests that return all results at once. Motion is disabled when the device
+requests reduced animation.
