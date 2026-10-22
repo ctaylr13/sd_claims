@@ -1,7 +1,10 @@
+import hashlib
 from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
 
 from .diagnostics import log_exception
-from .drive import FOLDER_MIME, inventory_claim, list_children, read_claims
+from .drive import FOLDER_MIME, inventory_claim, list_children, parse_claims, read_claims
 
 INPUT_FIELDS = {
     'Claim Date': 'claim_date', 'Lease Start Date': 'lease_start_date',
@@ -27,13 +30,22 @@ def validate_tracking_number(tracking_number):
 
 
 def load_claim_index(service, sources, tracking_number=None):
-    _, rows, source = read_claims(service, sources['claims_file_id'])
+    local_path = sources.get('local_csv')
+    if local_path:
+        path = Path(local_path)
+        content = path.read_bytes()
+        _, rows = parse_claims(content)
+        source = {'id': 'local-csv', 'name': path.name, 'mode': 'local_csv',
+                  'version': hashlib.sha256(content).hexdigest(),
+                  'read_at': datetime.now(timezone.utc).isoformat()}
+    else:
+        _, rows, source = read_claims(service, sources['claims_file_id'])
     records, folders = defaultdict(list), defaultdict(list)
     for row in rows:
         records[row['Tracking Number'].strip()].append(row)
     if tracking_number is not None:
         find_record(records, tracking_number)
-    for item in list_children(service, sources['evidence_root_folder_id']):
+    for item in ([] if local_path else list_children(service, sources['evidence_root_folder_id'])):
         if item['mimeType'] == FOLDER_MIME:
             folders[item['name'].strip()].append(item)
     return records, source, folders

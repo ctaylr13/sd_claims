@@ -1,0 +1,10 @@
+services:
+  backend:
+    # Host OAuth files have owner-only permissions.
+    user: "0:0"
+    environment:
+      CLAIMS_CSV_PATH: ""
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./secrets:/app/secrets
+      - ./drive-sources.json:/app/drive-sources.json:ro

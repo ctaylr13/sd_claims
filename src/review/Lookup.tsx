@@ -11,6 +11,7 @@ import { Badge, Button, Code, Copy, Definition, Details, Field, Heading, Link, L
 const ClaimReview = ({ claim, recommendation, onGenerate, busy }: { claim: Claim; recommendation: RecommendationState | null; onGenerate: () => void; busy: boolean }) => <Stack>
   <Panel>
     <Spread><Heading>Claim {claim.tracking_number}</Heading><Badge data-state="Needs review">Needs review</Badge></Spread>
+    {claim.claims_source.mode === 'local_csv' && <Notice>Local CSV: {claim.claims_source.name}. Drive evidence is unavailable in this mode. Use Document review for local PDFs.</Notice>}
     <Details><Summary>Recorded claim details</Summary><Stack>
       <Copy>These recorded inputs have not been independently verified.</Copy>
       <Definition>{Object.entries(claim.prediction_inputs).map(([key, field]) => <Fragment key={key}><Term>{label(key)}</Term><Value>{field.recorded_value || 'Missing'}</Value></Fragment>)}</Definition>

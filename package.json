@@ -1,5 +1,5 @@
 {
-  "name": "live-chat",
+  "name": "sd-claims",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test tests/trackingNumbers.test.mjs"
+    "test": "npm run test:frontend && npm run test:backend",
+    "test:frontend": "node --test tests/trackingNumbers.test.mjs",
+    "test:backend": ".venv/bin/python -m unittest discover -s tests -q",
+    "check": "npm run lint && npm run build && npm test"
   },
   "dependencies": {
     "@linaria/core": "^7.0.0",

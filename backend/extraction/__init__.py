@@ -16,7 +16,7 @@ from .pdf import extract_pdf, extraction_tools
 
 PARSER_VERSION = 'rules-0.3'
 SCHEMA_VERSION = 'extraction-0.3'
-CONFIG_VERSION = 'pdf-0.2'
+CONFIG_VERSION = 'pdf-0.3'
 
 PARSERS = {'ledger': ledger, 'move_out_statement': move_out, 'lease': lease, 'renewal': lease}
 

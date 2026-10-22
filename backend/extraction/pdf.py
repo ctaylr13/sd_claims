@@ -86,7 +86,6 @@ def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, conte
                 doc.pages.append(page)
                 try:
                     page.words = native_words(source_page)
-                    page.native_words = page.words[:]
                     page.native_text = ' '.join(word.text for word in page.words)
                 except Exception as error:
                     log_exception('native_text_failed', document_id=item.document_id, page_number=index)
@@ -106,6 +105,7 @@ def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, conte
                     page.fallback_reason = ('explicit_unusable_text' if index in item.force_ocr_pages
                                             else reason)
                     page.method = 'ocr'
+                    page.native_words = page.words
                     page.words = []
                     if page.image_path:
                         try:

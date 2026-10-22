@@ -251,9 +251,13 @@ class ExtractionTests(unittest.TestCase):
         doc = self.pdf([(30, 750, 'Amount Due $100.00 readable statement')],
                        next_pages=[[(30, 750, 'Sample')]], ocr=unavailable)
         self.assertEqual(doc.pages[0].method, 'native_text')
+        self.assertEqual(doc.pages[0].native_words, [])
         self.assertEqual(doc.pages[1].method, 'ocr')
         self.assertEqual(doc.pages[1].state, 'unreadable')
         self.assertEqual(doc.pages[1].native_words[0].text, 'Sample')
+        self.assertEqual(doc.pages[1].words, [])
+        self.assertEqual(doc.model_dump(mode='json')['pages'][1]['native_words'],
+                         [word.model_dump(mode='json') for word in doc.pages[1].native_words])
         self.assertTrue(doc.pages[1].errors)
         result = move_out(doc)
         self.assertEqual(result.fields['requested_insurer_reimbursement'].state, 'unreadable')
@@ -267,6 +271,8 @@ class ExtractionTests(unittest.TestCase):
         doc = self.pdf([(30, 750, 'Amount Due $100.00 readable native statement')], ocr=ocr, force_ocr_pages=[1])
         self.assertEqual(len(called), 1)
         self.assertIn('100.00', doc.pages[0].native_text)
+        self.assertEqual(' '.join(word.text for word in doc.pages[0].native_words),
+                         doc.pages[0].native_text)
         self.assertEqual(doc.pages[0].fallback_reason, 'explicit_unusable_text')
         observed = move_out(doc).fields['tenant_balance_due'].observations[0]
         self.assertEqual(observed.value, '200.00')
@@ -326,6 +332,14 @@ class ExtractionTests(unittest.TestCase):
                 report = json.loads(first.read_text())
                 document = report['documents'][0]['document']
                 self.assertEqual([page['method'] for page in document['pages']], ['native_text', 'ocr'])
+                native, scanned = document['pages']
+                self.assertTrue(native['words'])
+                self.assertEqual(native['native_words'], [])
+                self.assertEqual(' '.join(word['text'] for word in native['words']), native['native_text'])
+                self.assertEqual(' '.join(word['text'] for word in scanned['native_words']),
+                                 'Unusable scanned text')
+                self.assertEqual([word['text'] for word in scanned['words']],
+                                 ['Charges', 'Cleaning', '$200.00'])
                 self.assertEqual(document['source'], {'id': 'source', 'version': '7'})
                 rows = report['validation']['documents'][0]['rows']
                 self.assertEqual(rows[0]['status'], 'Extracted')

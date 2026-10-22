@@ -1,6 +1,6 @@
 export type Claim = {
   tracking_number: string;
-  claims_source: { id?: string; name?: string; version?: string; read_at?: string };
+  claims_source: { id?: string; name?: string; version?: string; read_at?: string; mode?: string };
   prediction_inputs: Record<string, { recorded_value: string; source_column: string; availability: string }>;
   historical_outcome: Record<string, string>;
   evidence: { state: string; folder: DriveItem | null; items: DriveItem[] };
