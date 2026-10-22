@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 from typing import Annotated
@@ -19,12 +20,19 @@ from .review import batch_recommendations, claim_recommendation, evaluation_metr
 
 load_dotenv(REPO_ROOT / '.env')
 
-app = FastAPI(title='Claims lookup API', version='0.1.0')
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.store = LocalStore(REPO_ROOT / 'cache/extraction')
+    yield
+
+
+app = FastAPI(title='Claims lookup API', version='0.1.0', lifespan=lifespan)
 authorization_lock = Lock()
 
 
-def get_store():
-    return LocalStore(REPO_ROOT / 'cache/extraction')
+def get_store(request: Request):
+    return request.app.state.store
 
 
 def get_drive(request: Request):
