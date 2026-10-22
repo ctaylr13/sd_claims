@@ -2,8 +2,9 @@
 
 `backend.prediction` builds historical initial-decision inputs without reading Drive,
 extraction reports, whole sheet rows, PDFs, filenames, or answer keys. It does not
-approve existing evidence or make any current claim training-eligible. The existing
-lookup API remains a research view with historical context, not a prediction API.
+approve existing evidence or make any current claim training-eligible. The lookup API remains a research view with historical context. The optional
+recommendation endpoint is a separate current-record research adapter; it does
+not build approved historical inputs.
 
 ## Approval contract
 
@@ -104,7 +105,9 @@ approvals on live evidence.
 ## Local experiments
 
 Install `requirements-prediction.txt` for the planned scikit-learn experiments.
-Neither experiment runner is imported by the lookup API or prediction CLI.
+Neither experiment runner is invoked by the lookup API or prediction CLI.
+The optional recommendation adapter lazily imports the existing research model
+code; configure its hash-verified artifacts as described in the root README.
 
 `python -m backend.prediction.experiment PLAN --output REPORT` uses reviewed
 snapshots and evaluation-only keys. `DevelopmentPlan` requires explicit reserved
@@ -125,7 +128,7 @@ The retrospective runner does not issue fact approvals, change historical
 eligibility, or establish pre-decision availability. It performs schema/status
 and amount-consistency review, not independent re-adjudication. Both runners
 keep recommendations advisory. Private datasets, research and approach decisions
-remain under the ignored data directory; no model is served by the API.
+remain under the ignored data directory; models are served only when explicitly configured for the research endpoint.
 
 `python -m backend.prediction.tuning ROOT --protocol PROTOCOL` freezes a tuning
 protocol against the existing `evaluation.json` and source fingerprints.
@@ -157,5 +160,6 @@ balanced accuracy. Source-study selection and reused development folds limit the
 conclusions; these scores do not represent an untouched final test or independently
 verified insurance correctness. The comparison does not load reserved outcomes.
 The selected spreadsheet model can be exported with `recommendations train` and
-loaded through the existing hash-checked recommendation CLI. The API/UI integration
-is a separate step from completing this research comparison.
+loaded through the existing hash-checked recommendation CLI. The review workspace exposes the explicitly configured spreadsheet recommendation
+model and aggregate recommendation evaluation report. Document comparison reports
+are not automatically served or promoted to active models.

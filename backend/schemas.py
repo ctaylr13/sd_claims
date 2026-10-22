@@ -77,3 +77,57 @@ class BatchLookupResponse(BaseModel):
     total: int
     found: int
     failed: int
+
+
+class DecisionMetrics(BaseModel):
+    accuracy: float | None = Field(ge=0, le=1)
+    balanced_accuracy: float | None = Field(ge=0, le=1)
+    decline_recall: float | None = Field(ge=0, le=1)
+    confusion_matrix: list[list[int]]
+
+    @field_validator('confusion_matrix')
+    @classmethod
+    def two_classes(cls, value):
+        if len(value) != 2 or any(len(row) != 2 or any(count < 0 for count in row) for row in value):
+            raise ValueError('Expected declined/approved confusion matrix')
+        return value
+
+
+class DecisionComparison(BaseModel):
+    research_decision: DecisionMetrics
+    majority_decision: DecisionMetrics
+
+
+class CeilingMetrics(BaseModel):
+    mae_dollars: float = Field(ge=0, allow_inf_nan=False)
+    within_tolerance_rate: float = Field(ge=0, le=1)
+
+
+class ScoredCeiling(BaseModel):
+    count: int = Field(ge=0)
+    metrics: CeilingMetrics | None
+
+
+class EvaluationCoverage(BaseModel):
+    development_rows: int = Field(ge=0)
+    qualified_outcomes: int = Field(ge=0)
+    conditional_estimates: int = Field(ge=0)
+    scoreable_approved_advisories: int = Field(ge=0)
+    withheld: int = Field(ge=0)
+
+
+class IndependentReview(BaseModel):
+    status: str
+    reviewed_claim_count: int = Field(ge=0)
+    required: str
+
+
+class EvaluationMetrics(BaseModel):
+    version: str
+    created_at: str
+    scope: Literal['development_only_historical_agreement']
+    method: str
+    decision: DecisionComparison
+    ceiling_on_same_approved_advisory_subset: dict[str, ScoredCeiling]
+    coverage: EvaluationCoverage
+    independent_correctness: IndependentReview

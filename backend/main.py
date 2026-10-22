@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 from threading import Lock
 from typing import Annotated
 
+from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException
 
 from .batches import BatchProgress, BatchRequest, create_batch, run_batch
@@ -12,6 +14,9 @@ from .claims import LookupError, SOURCE_UNAVAILABLE_MESSAGE, lookup_claim, looku
 from .drive import REPO_ROOT, connect_drive, load_sources
 from .schemas import BatchLookupRequest, BatchLookupResponse, ClaimResponse, ErrorResponse
 from .storage import LocalStore
+from .review import batch_recommendations, claim_recommendation, evaluation_metrics
+
+load_dotenv(REPO_ROOT / '.env')
 
 app = FastAPI(title='Claims lookup API', version='0.1.0')
 authorization_lock = Lock()
@@ -91,8 +96,7 @@ def batch_progress(batch_id: str, store: Annotated[LocalStore, Depends(get_store
     return require_batch(store, batch_id)
 
 
-@app.get('/api/batches/{batch_id}/claims/{index}/result')
-def batch_result(batch_id: str, index: int, store: Annotated[LocalStore, Depends(get_store)]):
+def require_result(batch_id, index, store):
     progress = require_batch(store, batch_id)
     if not 0 <= index < len(progress['results']):
         raise LookupError('claim_not_found', 404, 'Batch claim index not found')
@@ -102,7 +106,12 @@ def batch_result(batch_id: str, index: int, store: Annotated[LocalStore, Depends
     path = store.result_for_attempt(result['attempt'])
     if path is None:
         raise LookupError('result_unavailable', 409, 'Result artifacts require an explicit retry')
-    return json.loads(path.read_text())
+    return path
+
+
+@app.get('/api/batches/{batch_id}/claims/{index}/result')
+def batch_result(batch_id: str, index: int, store: Annotated[LocalStore, Depends(get_store)]):
+    return json.loads(require_result(batch_id, index, store).read_text())
 
 
 @app.post('/api/claims/lookup', response_model=BatchLookupResponse,
@@ -122,3 +131,49 @@ def claim_lookup(tracking_number: str, drive: Annotated[tuple, Depends(get_drive
         raise
     except Exception:
         raise LookupError('source_unavailable', 502, SOURCE_UNAVAILABLE_MESSAGE) from None
+
+
+@app.post('/api/claims/{tracking_number}/recommendation')
+def recommendation(tracking_number: str, drive: Annotated[tuple, Depends(get_drive)]):
+    return claim_recommendation(lookup_claim(*drive, tracking_number))
+
+
+@app.get('/api/review/metrics')
+def metrics():
+    return evaluation_metrics()
+
+
+def retained_document(batch_id, index, document_index, store, page_number=None):
+    result = require_result(batch_id, index, store)
+    report = json.loads(result.read_text())
+    documents = report.get('documents', [])
+    if not 0 <= document_index < len(documents):
+        raise LookupError('document_not_found', 404, 'Document not found')
+    document = documents[document_index]['document']
+    original = document.get('original_path')
+    if page_number is not None:
+        page = next((page for page in document.get('pages', []) if page['number'] == page_number), {})
+        original = page.get('image_path')
+    path = Path(original).resolve() if original else None
+    if path is None or not path.is_relative_to(result.parent.resolve()) or not path.is_file():
+        raise LookupError('document_not_found', 404, 'Retained document or page unavailable')
+    return path
+
+
+@app.get('/api/batches/{batch_id}/claims/{index}/documents/{document_index}')
+def batch_document(batch_id: str, index: int, document_index: int,
+                   store: Annotated[LocalStore, Depends(get_store)]):
+    return FileResponse(retained_document(batch_id, index, document_index, store),
+                        media_type='application/pdf', headers={'Content-Disposition': 'inline'})
+
+
+@app.get('/api/batches/{batch_id}/claims/{index}/documents/{document_index}/pages/{page_number}')
+def batch_page(batch_id: str, index: int, document_index: int, page_number: int,
+               store: Annotated[LocalStore, Depends(get_store)]):
+    return FileResponse(retained_document(batch_id, index, document_index, store, page_number),
+                        media_type='image/png')
+
+
+@app.post('/api/claims/recommendations')
+def recommend_batch(body: BatchLookupRequest, drive: Annotated[tuple, Depends(get_drive)]):
+    return batch_recommendations(lookup_claims(*drive, body.tracking_numbers))
