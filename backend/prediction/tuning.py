@@ -9,22 +9,12 @@ from time import perf_counter
 import numpy as np
 
 from .experiment import amount_metrics, classification_metrics
-from .retrospective import (DATES, TOLERANCE, _interpretation, file_hash, load_rows,
-                            qualify, recorded_date)
+from .features import calendar_features
+from .parsing import recorded_date
+from .retrospective import TOLERANCE, _interpretation, file_hash, load_rows, qualify
 
 SEED = 20261022
 THRESHOLDS = (.05, .1, .15, .2, .3, .4, .5, .6, .7, .8, .9)
-
-
-def calendar_features(row, base):
-    values = dict(base)
-    for name in DATES:
-        value, _ = recorded_date(row.get(name))
-        if value is not None:
-            values[f'{name}:ordinal'] = float(value.toordinal())
-            values[f'{name}:month_sin'] = float(np.sin(2 * np.pi * (value.month - 1) / 12))
-            values[f'{name}:month_cos'] = float(np.cos(2 * np.pi * (value.month - 1) / 12))
-    return values
 
 
 def candidates(task):
@@ -226,6 +216,8 @@ def protocol(root):
             'prior_evaluation_sha256': file_hash(root / 'evaluation.json'),
             'source_hashes': previous['source_hashes'], 'reserved_count': len(reservation['reserved_claim_ids']),
             'code_sha256': file_hash(Path(__file__)),
+            'code_hashes': {name: file_hash(Path(__file__).with_name(name))
+                            for name in ('parsing.py', 'features.py')},
             'candidates': {task: [{'estimator': type(model).__name__, 'parameters': model.get_params()}
                                   for model in candidates(task)] for task in ('decision', 'ceiling')},
             'scope': 'Development tuning only. No inference integration or reserved outcome reads.',

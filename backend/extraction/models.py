@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .capture import MAX_DOCUMENTS
+
 
 class Model(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -138,7 +140,7 @@ class ReviewRegion(Model):
 
 class Manifest(Model):
     claim_id: str = Field(min_length=1)
-    documents: list[DocumentInput] = Field(min_length=1)
+    documents: list[DocumentInput] = Field(min_length=1, max_length=MAX_DOCUMENTS)
     effective_on: str | None = None
     recorded_requests: list[CellCitation] = Field(default_factory=list)
     review_regions: list[ReviewRegion] = Field(default_factory=list)

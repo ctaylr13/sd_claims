@@ -11,18 +11,12 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .baseline import BASELINE_VERSION, MONEY_KEYS, money_value, policy_limit, rules_baseline
+from .baseline import BASELINE_VERSION, MONEY_KEYS, policy_limit, rules_baseline
 from .builder import build_prediction_bundle
 from .evaluation import AccessPurpose, load_answer_key
 from .models import FACT_KEYS, CandidateFact, FrozenModel
+from .parsing import canonical_id, money_value
 from .snapshots import digest, load_snapshot
-
-
-def canonical_id(value):
-    value = value.strip()
-    if not value:
-        raise ValueError('Empty claim ID')
-    return str(int(value)) if value.isdecimal() else value
 
 
 class DevelopmentClaim(FrozenModel):

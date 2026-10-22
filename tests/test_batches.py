@@ -127,6 +127,14 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(self.client.post('/api/batches', json=body).status_code, 422)
         self.assertEqual(self.client.get('/api/batches/missing').status_code, 404)
 
+    def test_document_count_limit_rejects_batch_before_execution(self):
+        claim = self.body['claims'][0]
+        documents = [{**claim['documents'][0], 'document_id': str(index)} for index in range(21)]
+        with patch('backend.main.run_batch') as run:
+            response = self.client.post('/api/batches', json={'claims': [{**claim, 'documents': documents}]})
+        self.assertEqual(response.status_code, 422)
+        run.assert_not_called()
+
     def test_flow_failure_is_persisted_and_sanitized(self):
         progress = create_batch(self.store, self.request)
         with patch('backend.flows.claim_batch_flow', side_effect=RuntimeError('private source')):

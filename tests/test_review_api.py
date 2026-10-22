@@ -15,7 +15,7 @@ from backend.extraction import extract_claim
 from backend.main import app, get_drive, get_store
 from backend.prediction.artifacts import ResearchModels, Tree
 from backend.prediction.recommendations import ModelArtifact, code_hashes
-from backend.storage import LocalStore
+from backend.storage import LocalStore, RetryRequired, _file_digest
 
 
 class ReviewApiTests(unittest.TestCase):
@@ -148,6 +148,79 @@ class ReviewApiTests(unittest.TestCase):
         Path(report['documents'][0]['document']['original_path']).write_bytes(b'changed')
         self.assertEqual(self.client.get(f'{base}/documents/0').status_code, 409)
         self.assertEqual(self.client.get(f'{base}/documents/0/pages/1').status_code, 409)
+
+    def evidence_attempt(self, *, store_name='store', untracked_page=False):
+        store = LocalStore(self.root / store_name)
+        app.dependency_overrides[get_store] = lambda: store
+
+        def produce(directory):
+            (directory / 'original.pdf').write_bytes(b'original')
+            pages = directory / 'pages'
+            pages.mkdir()
+            if not untracked_page:
+                (pages / '1.png').write_bytes(b'page one')
+            (pages / '2.png').write_bytes(b'page two')
+            report = directory / 'report.json'
+            report.write_text(json.dumps({'documents': [{'document': {
+                'original_path': str(directory / 'original.pdf'),
+                'pages': [{'number': n, 'image_path': str(pages / f'{n}.png')} for n in (1, 2)]}}]}))
+            return report
+
+        report = store.run({'claim': 'evidence'}, produce)
+        store.save_batch({'batch_id': 'evidence', 'results': [
+            {'state': 'succeeded', 'attempt': report.parent.name}]})
+        return store, report, '/api/batches/evidence/claims/0'
+
+    def test_evidence_hashes_only_report_source_and_requested_page(self):
+        _, report, base = self.evidence_attempt()
+        for suffix, names in (
+                ('/documents/0/pages/1', ('report.json', 'original.pdf', 'pages/1.png')),
+                ('/documents/0', ('report.json', 'original.pdf')),
+                ('/result', ('report.json', 'original.pdf', 'pages/1.png', 'pages/2.png')),
+                ('/documents/0/pages/99', ('report.json',))):
+            with self.subTest(endpoint=suffix), patch('backend.storage._file_digest', wraps=_file_digest) as hashed:
+                response = self.client.get(base + suffix)
+                self.assertEqual(response.status_code, 404 if suffix.endswith('/99') else 200)
+                self.assertCountEqual([call.args[0] for call in hashed.call_args_list],
+                                      [report.parent / name for name in names])
+
+    def test_unrelated_page_damage_allows_evidence_but_blocks_full_verification(self):
+        for damage in ('modify', 'delete'):
+            with self.subTest(damage=damage):
+                store, report, base = self.evidence_attempt(store_name=damage)
+                unrelated = report.parent / 'pages/2.png'
+                if damage == 'modify':
+                    unrelated.write_bytes(b'changed')
+                else:
+                    unrelated.unlink()
+                response = self.client.get(base + '/documents/0/pages/1')
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.content, b'page one')
+                self.assertEqual(self.client.get(base + '/documents/0').status_code, 200)
+                self.assertEqual(self.client.get(base + '/result').status_code, 409)
+                producer = Mock()
+                with self.assertRaises(RetryRequired):
+                    store.run({'claim': 'evidence'}, producer)
+                producer.assert_not_called()
+
+    def test_evidence_rejects_missing_or_modified_report_source_and_requested_page(self):
+        _, report, base = self.evidence_attempt()
+        for name in ('report.json', 'original.pdf', 'pages/1.png'):
+            path = report.parent / name
+            content = path.read_bytes()
+            for damage in ('modify', 'delete'):
+                with self.subTest(artifact=name, damage=damage):
+                    if damage == 'modify':
+                        path.write_bytes(b'changed')
+                    else:
+                        path.unlink()
+                    self.assertEqual(self.client.get(base + '/documents/0/pages/1').status_code, 409)
+                    path.write_bytes(content)
+
+    def test_evidence_rejects_file_absent_from_published_inventory(self):
+        _, report, base = self.evidence_attempt(untracked_page=True)
+        (report.parent / 'pages/1.png').write_bytes(b'untracked')
+        self.assertEqual(self.client.get(base + '/documents/0/pages/1').status_code, 409)
 
     def test_model_code_change_is_rejected(self):
         path = self.model()

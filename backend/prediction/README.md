@@ -106,8 +106,13 @@ approvals on live evidence.
 
 Install `requirements-prediction.txt` for the planned scikit-learn experiments.
 Neither experiment runner is invoked by the lookup API or prediction CLI.
-The optional recommendation adapter lazily imports the existing research model
-code; configure its hash-verified artifacts as described in the root README.
+The optional recommendation adapter imports inference from `recommendations.py`.
+Shared parsing and feature preparation live in `parsing.py` and `features.py`.
+Fitting, training and evaluation live in `recommendations_research.py`, loaded by
+the existing `recommendations train` and `recommendations evaluate` CLI commands.
+Inference does not import those workflows or scikit-learn. Configure its
+hash-verified artifacts as described in the root README; implementation changes
+still require refitting and reevaluation.
 
 `python -m backend.prediction.experiment PLAN --output REPORT` uses reviewed
 snapshots and evaluation-only keys. `DevelopmentPlan` requires explicit reserved

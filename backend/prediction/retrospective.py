@@ -11,17 +11,15 @@ from time import perf_counter
 
 import numpy as np
 
-from .baseline import money_value
-from .experiment import amount_metrics, canonical_id, classification_metrics
+from .experiment import amount_metrics, classification_metrics
+from .features import DATES, MONEY, row_features
+from .parsing import APPROVAL_STATUSES, canonical_id, recorded_date, recorded_money
 
-APPROVAL_STATUSES = frozenset({'Posted', 'Approved', 'Approved Revised'})
 COLUMNS = {0: 'Tracking Number', 1: 'Claim Date', 3: 'Lease Street Address', 4: 'Lease City',
            5: 'Lease State', 6: 'Lease Zip', 7: 'Lease Start Date', 8: 'Lease End Date',
            9: 'Move-Out Date', 10: 'Monthly Rent', 11: 'Amount of Claim',
            12: 'Termination Type', 26: 'Policy', 27: 'Max Benefit', 28: 'Status',
            30: 'Approved Benefit Amount'}
-MONEY = {'Monthly Rent': 'rent', 'Amount of Claim': 'request', 'Max Benefit': 'limit'}
-DATES = ('Claim Date', 'Lease Start Date', 'Lease End Date', 'Move-Out Date')
 TOLERANCE = 100
 
 
@@ -83,52 +81,6 @@ def load_rows(root):
         if identity != expected[number] or identity in reserved:
             raise ValueError('Development source identity changed')
     return list(rows.values()), reservation
-
-
-def recorded_money(value):
-    if value is None or not str(value).strip():
-        return None, 'missing'
-    value = str(value).strip()
-    if not re.fullmatch(r'\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?', value):
-        return None, 'invalid'
-    parsed = money_value(value.replace('$', '').replace(',', ''))
-    return (float(parsed), 'present') if parsed is not None else (None, 'invalid')
-
-
-def recorded_date(value):
-    if value is None or not str(value).strip():
-        return None, 'missing'
-    for pattern in ('%m/%d/%y', '%m/%d/%Y', '%Y-%m-%d'):
-        try:
-            return datetime.strptime(str(value).strip(), pattern).date(), 'present'
-        except ValueError:
-            pass
-    return None, 'invalid'
-
-
-def row_features(row, *, without_limit=False):
-    result = {}
-    for column, name in MONEY.items():
-        if without_limit and name == 'limit':
-            continue
-        value, state = recorded_money(row.get(column))
-        result[f'{name}:state={state}'] = 1.0
-        if value is not None:
-            result[name] = value
-    dates = {}
-    for column in DATES:
-        value, state = recorded_date(row.get(column))
-        dates[column] = value
-        result[f'{column}:state={state}'] = 1.0
-    for name, start, end in (
-            ('lease_days', 'Lease Start Date', 'Lease End Date'),
-            ('days_after_move_out', 'Move-Out Date', 'Claim Date'),
-            ('lease_days_remaining', 'Move-Out Date', 'Lease End Date')):
-        if dates[start] is not None and dates[end] is not None:
-            result[name] = float((dates[end] - dates[start]).days)
-    termination = str(row.get('Termination Type') or '').strip()
-    result[f'termination={termination if termination else "missing"}'] = 1.0
-    return result
 
 
 def property_group(row):
@@ -451,7 +403,7 @@ def run(root):
               'sensitivity_including_zero_and_above_limit_ceilings': anomalies}
     report['total_seconds'] = perf_counter() - started
     report['code_hashes'] = {name: file_hash(Path(__file__).with_name(name)) for name in (
-        'retrospective.py', 'baseline.py', 'experiment.py')}
+        'retrospective.py', 'baseline.py', 'experiment.py', 'parsing.py', 'features.py')}
     return report
 
 

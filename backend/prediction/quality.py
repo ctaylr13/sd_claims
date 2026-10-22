@@ -9,10 +9,10 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .experiment import canonical_id
+from .features import DATES, MONEY, row_features
 from .models import FrozenModel
-from .retrospective import (DATES, MONEY, evaluate_task, file_hash, load_rows,
-                            recorded_date, recorded_money, row_features)
+from .parsing import canonical_id, recorded_date, recorded_money
+from .retrospective import evaluate_task, file_hash, load_rows
 from .tuning import dataset
 
 MODES = ('recorded', 'no_dates', 'masked_date_relations', 'source_repaired')
@@ -138,7 +138,8 @@ def protocol(root, repair_path):
             'baseline_sha256': file_hash(root / 'evaluation.json'),
             'source_hashes': previous['source_hashes'], 'modes': list(MODES),
             'code_hashes': {name: file_hash(Path(__file__).with_name(name)) for name in (
-                'quality.py', 'retrospective.py', 'tuning.py', 'experiment.py', 'baseline.py', 'models.py')},
+                'quality.py', 'retrospective.py', 'tuning.py', 'experiment.py', 'baseline.py', 'models.py',
+                'parsing.py', 'features.py')},
             'selection': 'Fixed existing estimators and property-group folds; no parameter tuning or reserved data.',
             'scope': 'Exploratory current-record reconstruction; document repairs do not verify pre-decision availability or labels.'}
 

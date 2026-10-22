@@ -4,6 +4,7 @@ from pathlib import Path
 from backend.storage import JobInProgress, RetryRequired
 
 from . import extract_claim
+from .capture import ExtractionLimitExceeded
 from .models import Manifest
 
 
@@ -24,7 +25,7 @@ def main():
         item.path = str((args.manifest.resolve().parent / item.path).resolve())
     try:
         print(extract_claim(manifest, args.output, retry=args.retry))
-    except (JobInProgress, RetryRequired) as error:
+    except (JobInProgress, RetryRequired, ExtractionLimitExceeded) as error:
         parser.exit(1, f'{error}\n')
 
 

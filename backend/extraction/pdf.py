@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pdfplumber
 
+from .capture import MAX_FILE_BYTES, ExtractionLimitExceeded, capture_pdf
 from .models import Document, DocumentInput, Page, Word
 
 
@@ -59,18 +60,22 @@ def extraction_tools():
     return tools
 
 
-def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, content=None, tools=None):
-    if content is None:
-        content = Path(item.path).read_bytes()
-    digest = hashlib.sha256(content).hexdigest()
+def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, content=None,
+                captured_path=None, tools=None):
+    if content is not None and len(content) > MAX_FILE_BYTES:
+        raise ExtractionLimitExceeded('Each PDF must be at most 50 MiB')
     artifact_dir.mkdir(parents=True, exist_ok=False)
     original = artifact_dir / 'original.pdf'
-    original.write_bytes(content)
+    if content is None:
+        digest, _ = capture_pdf(Path(captured_path) if captured_path is not None else Path(item.path), original)
+    else:
+        original.write_bytes(content)
+        digest = hashlib.sha256(content).hexdigest()
     doc = Document(document_id=item.document_id, kind=item.kind, sha256=digest,
                    original_path=str(original.resolve()), source=item.source,
                    tools=extraction_tools() if tools is None else tools)
     try:
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
+        with pdfplumber.open(original) as pdf:
             if any(number > len(pdf.pages) for number in item.force_ocr_pages):
                 doc.errors.append('force_ocr_page_out_of_range')
             for index, source_page in enumerate(pdf.pages, 1):

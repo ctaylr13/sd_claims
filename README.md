@@ -17,6 +17,12 @@ The request key covers document SHA-256 hashes, source references and versions,
 claim/document IDs, parser/schema/config versions, extraction tool versions, and
 all manifest settings (including forced OCR pages, effective date, and recorded
 request citations). Extraction parses the captured bytes used for that key.
+PDFs are captured and hashed in chunks into a private temporary directory, then
+processed sequentially from those files. Temporary captures are removed when the
+request finishes, including cache hits and failures. Each claim supports at most
+20 documents, each PDF at most 50 MiB, and combined PDFs at most 200 MiB. Size
+limits are checked while capturing, before any PDF is parsed; exceeding a limit
+rejects the claim. Retained originals and page artifacts remain in the local store.
 Bump `PARSER_VERSION` when rules change, `CONFIG_VERSION` when extraction defaults
 change, and `SCHEMA_VERSION` when report structure changes. Tool versions are
 collected automatically. Source IDs/versions must be supplied in the manifest;
@@ -150,9 +156,11 @@ A production host must serve `dist/` and proxy `/api` to the same trusted local 
   report. Expand fields to inspect raw/normalized values, competing observations,
   limitations, and citations. Citation buttons open the retained page image with the cited region highlighted,
   alongside its quote, hash, and page-point coordinates. Page controls navigate
-  the document; a separate link opens the retained PDF at the cited page. The document
-  endpoint verifies the stored artifact inventory and only serves the original
-  PDF inside the selected attempt. Failed checks and unknown row amounts remain
+  the document; a separate link opens the retained PDF at the cited page. Evidence
+  endpoints verify the report, source PDF, and requested page image against
+  the stored inventory. Only inventoried files inside the selected attempt are served.
+  Report loading and extraction reuse still verify every artifact; damage to unrelated
+  pages does not block viewing intact evidence. Failed checks and unknown row amounts remain
   explicit. The workspace does not issue fact approvals or claim decisions.
 
 Research recommendations are optional and use the existing current-record model.

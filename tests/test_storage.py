@@ -1,3 +1,4 @@
+import io
 import json
 import subprocess
 import sys
@@ -6,13 +7,30 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from reportlab.pdfgen.canvas import Canvas
 
 from backend.extraction import extract_claim
 from backend.extraction.models import DocumentInput, Manifest
-from backend.storage import JobInProgress, LocalStore, RetryRequired, canonical_bytes, digest
+from backend.storage import JobInProgress, LocalStore, RetryRequired, _file_digest, canonical_bytes, digest
+
+
+class FileDigestTests(unittest.TestCase):
+    def test_hashes_exact_bytes_with_bounded_reads(self):
+        chunk_size = 1024 * 1024
+        for size in (0, 13, chunk_size, 2 * chunk_size + 13):
+            with self.subTest(size=size):
+                content = (bytes(range(256)) * (size // 256 + 1))[:size]
+                stream = io.BytesIO(content)
+                path = Mock()
+                path.open.return_value = stream
+                with patch.object(stream, 'read', wraps=stream.read) as read:
+                    self.assertEqual(_file_digest(path), digest(content))
+                path.open.assert_called_once_with('rb')
+                self.assertTrue(all(0 < call.args[0] <= chunk_size for call in read.call_args_list))
+                self.assertGreaterEqual(read.call_count, size // chunk_size + 1)
+                self.assertTrue(stream.closed)
 
 
 class StorageTests(unittest.TestCase):
@@ -33,8 +51,9 @@ class StorageTests(unittest.TestCase):
         return result
 
     def test_duplicate_requests_reuse_verified_results_across_store_instances(self):
-        result = self.store.run(self.request, self.produce)
-        second = LocalStore(self.root).run(dict(reversed(list(self.request.items()))), self.produce)
+        with patch.object(Path, 'read_bytes', side_effect=AssertionError('Unbounded artifact read')):
+            result = self.store.run(self.request, self.produce)
+            second = LocalStore(self.root).run(dict(reversed(list(self.request.items()))), self.produce)
         self.assertEqual(result, second)
         self.assertEqual(self.calls, 1)
         row = self.store.status(digest(canonical_bytes(self.request)))
@@ -218,9 +237,9 @@ class ExtractionStorageTests(unittest.TestCase):
                 path=str(source), document_id='doc', kind='lease')])
             from backend.extraction.pdf import extract_pdf
 
-            def replace_source(item, directory, *, content, tools):
+            def replace_source(item, directory, *, captured_path, tools):
                 source.write_bytes(b'new bytes')
-                return extract_pdf(item, directory, content=content, tools=tools)
+                return extract_pdf(item, directory, captured_path=captured_path, tools=tools)
 
             with patch('backend.extraction.extract_pdf', side_effect=replace_source):
                 result = extract_claim(manifest, root / 'store')

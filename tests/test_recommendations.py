@@ -9,7 +9,8 @@ from pydantic import ValidationError
 
 from backend.prediction.artifacts import ResearchModels, Tree, predict
 from backend.prediction.recommendations import (INPUT_COLUMNS, ModelArtifact, ResearchInput,
-    code_hashes, evaluate, fit_models, load_model, main, recommend)
+    code_hashes, load_model, main, recommend)
+from backend.prediction.recommendations_research import evaluate, fit_models
 from backend.prediction.retrospective import estimators, qualify
 from backend.prediction.tuning import pipeline_for
 from test_retrospective import row
@@ -196,9 +197,9 @@ class RecommendationTests(unittest.TestCase):
         previous = {'source_hashes': {'development-source.json': 'a' * 64}}
         reservation = {'reserved_claim_ids': ['9999']}
         splits = [(list(range(40)), list(range(40, 80))), (list(range(40, 80)), list(range(40)))]
-        with patch('backend.prediction.recommendations.dataset', return_value=(cohort, splits, previous, reservation)), \
-             patch('backend.prediction.recommendations.load_rows', return_value=(rows, reservation)), \
-             patch('backend.prediction.recommendations.file_hash', return_value='a' * 64):
+        with patch('backend.prediction.recommendations_research.dataset', return_value=(cohort, splits, previous, reservation)), \
+             patch('backend.prediction.recommendations_research.load_rows', return_value=(rows, reservation)), \
+             patch('backend.prediction.recommendations_research.file_hash', return_value='a' * 64):
             report = evaluate(Path('/unused'))
         json.dumps(report, allow_nan=False)
         self.assertFalse(report['reserved_outcomes_loaded'])
@@ -207,6 +208,32 @@ class RecommendationTests(unittest.TestCase):
         self.assertEqual(len(set(counts)), 1)
         self.assertEqual(len(report['out_of_fold']), 80)
         self.assertEqual(report['independent_correctness']['status'], 'not_evaluated')
+
+    def test_training_and_evaluation_cli_keep_existing_commands_and_outputs(self):
+        previous = {'source_hashes': {'development-source.json': 'a' * 64}}
+        reservation = {'reserved_claim_ids': ['9999']}
+        splits = [(list(range(40)), list(range(40, 80))), (list(range(40, 80)), list(range(40)))]
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('backend.prediction.recommendations_research.dataset',
+                   return_value=(self.cohort, splits, previous, reservation)), \
+             patch('backend.prediction.recommendations_research.load_rows',
+                   return_value=(self.rows, reservation)), \
+             patch('backend.prediction.recommendations_research.file_hash', return_value='a' * 64):
+            for command in ('train', 'evaluate'):
+                with self.subTest(command=command):
+                    output = Path(directory) / f'{command}.json'
+                    args = ['recommendations', command, '/unused', '--output', str(output)]
+                    with patch('sys.argv', args):
+                        main()
+                    result = json.loads(output.read_text())
+                    self.assertEqual(result['code_hashes'], code_hashes())
+                    if command == 'train':
+                        artifact = ModelArtifact.model_validate(result)
+                        self.assertEqual(artifact.reserved_ids, ('9999',))
+                        self.assertEqual(len(artifact.development_ids), 80)
+                    else:
+                        self.assertFalse(result['reserved_outcomes_loaded'])
+                        self.assertEqual(len(result['out_of_fold']), 80)
 
 
 if __name__ == '__main__':
