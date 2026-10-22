@@ -3,14 +3,12 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal
 
-from prefect.settings import (PREFECT_API_KEY, PREFECT_API_URL, PREFECT_HOME,
-                              PREFECT_SERVER_ANALYTICS_ENABLED, PREFECT_SERVER_EPHEMERAL_ENABLED,
-                              temporary_settings)
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .diagnostics import failure_context, log_exception
+from .extraction import extract_claim
 from .extraction.models import Manifest
-from .storage import JobInProgress, LocalStore, RetryRequired
+from .storage import JobInProgress, RetryRequired
 
 execution_lock = Lock()
 
@@ -56,8 +54,7 @@ def create_batch(store, request):
     return progress
 
 
-def process_batch(batch_id, request, output_root, extract):
-    store = LocalStore(Path(output_root))
+def process_batch(batch_id, request, store, extract):
     progress = store.batch(batch_id)
     progress['state'] = 'running'
     store.save_batch(progress)
@@ -66,7 +63,7 @@ def process_batch(batch_id, request, output_root, extract):
         store.save_batch(progress)
         try:
             with failure_context(batch_id=batch_id, claim_id=manifest.claim_id):
-                path = Path(extract(manifest, output_root, request.retry))
+                path = Path(extract(manifest, store.root, request.retry))
             result.update(state='succeeded', attempt=path.parent.name)
             progress['succeeded'] += 1
         except Exception as error:
@@ -82,20 +79,23 @@ def process_batch(batch_id, request, output_root, extract):
     return progress
 
 
-def run_batch(batch_id, request, output_root):
+def run_batch(batch_id, request, store):
     with execution_lock:
         try:
-            from .flows import claim_batch_flow
-
-            with temporary_settings(updates={
-                PREFECT_API_URL: None, PREFECT_API_KEY: None,
-                PREFECT_HOME: output_root / 'prefect',
-                PREFECT_SERVER_ANALYTICS_ENABLED: False, PREFECT_SERVER_EPHEMERAL_ENABLED: True,
-            }):
-                claim_batch_flow(batch_id, request, str(output_root))
+            process_batch(batch_id, request, store,
+                          lambda manifest, root, retry: extract_claim(manifest, root, retry=retry))
         except Exception:
             log_exception('run_batch', batch_id=batch_id)
-            store = LocalStore(output_root)
             progress = store.batch(batch_id)
-            progress.update(state='failed', error='batch_execution_failed')
+            fail_unfinished_batch(progress, 'batch_execution_failed')
             store.save_batch(progress)
+
+
+def fail_unfinished_batch(progress, error):
+    for result in progress['results']:
+        if result['state'] in ('queued', 'running'):
+            result.update(state='failed', error=error)
+    progress.update(state='failed', error=error,
+                    succeeded=sum(result['state'] == 'succeeded' for result in progress['results']),
+                    failed=sum(result['state'] == 'failed' for result in progress['results']))
+    progress['completed'] = progress['succeeded'] + progress['failed']

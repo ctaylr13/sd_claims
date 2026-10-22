@@ -130,7 +130,7 @@ class ReviewApiTests(unittest.TestCase):
         body = BatchRequest(claims=[{'claim_id': 'example', 'documents': [
             {'document_id': 'statement', 'kind': 'move_out_statement', 'path': str(source)}]}])
         progress = create_batch(store, body)
-        process_batch(progress['batch_id'], body, store.root,
+        process_batch(progress['batch_id'], body, store,
                       lambda manifest, root, retry: extract_claim(manifest, root, retry=retry))
         base = f'/api/batches/{progress["batch_id"]}/claims/0'
         response = self.client.get(f'{base}/documents/0')

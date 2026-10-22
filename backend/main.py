@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException
 
-from .batches import BatchProgress, BatchRequest, create_batch, run_batch
+from .batches import BatchProgress, BatchRequest, create_batch, fail_unfinished_batch, run_batch
 from .claims import LookupError, SOURCE_UNAVAILABLE_MESSAGE, lookup_claim, lookup_claims
 from .diagnostics import failure_context, log_exception
 from .drive import REPO_ROOT, connect_drive, load_sources
@@ -24,6 +24,7 @@ load_dotenv(REPO_ROOT / '.env')
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.store = LocalStore(REPO_ROOT / 'cache/extraction')
+    app.state.store.recover_batches(fail_unfinished_batch)
     yield
 
 
@@ -97,7 +98,7 @@ def health():
 def submit_batch(body: BatchRequest, background: BackgroundTasks,
                  store: Annotated[LocalStore, Depends(get_store)]):
     progress = create_batch(store, body)
-    background.add_task(run_batch, progress['batch_id'], body, store.root)
+    background.add_task(run_batch, progress['batch_id'], body, store)
     return progress
 
 

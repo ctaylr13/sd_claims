@@ -81,18 +81,17 @@ fixture or evidence of reliable table extraction. Universal scan support and
 broad OCR comparisons are deferred; only specific blockers for this slice belong
 in follow-up fixes.
 
-Local Prefect batches wrap `extract_claim` and use the same `cache/extraction`
-store. FastAPI is pinned to 0.150.0 to share one environment with Prefect 3.9:
+Local batches call `extract_claim` and use the same `cache/extraction` store:
 
 ```sh
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-The API runs the flow directly in a background thread; Prefect starts its
-temporary local server. The flow uses local settings with no Prefect Cloud
-credentials/API URL and disables telemetry. No deployment, worker, or separately
-managed Prefect service is required.
+The API runs batches directly in a background thread. Prefect was removed because
+its wrapper added a temporary server while retries, artifact reuse, and progress
+already belonged to the local store. Storage is initialized at API startup;
+request handlers and batch execution share that store.
 
 Submit 1–20 unique claim manifests to `POST /api/batches`:
 
@@ -118,15 +117,24 @@ ordered per-claim states; fetch a verified report at
 Results with missing or modified artifacts return `409`.
 
 Claims run sequentially; an extraction exception fails only that claim and later
-claims continue. `completed` means every claim was attempted, including failures.
+claims continue. `completed` counts claims with a terminal disposition, including
+failures and claims stopped by an interruption before extraction began.
 A successful extraction can still contain diagnostic errors and review items.
 Successful requests reuse existing verified artifacts. Resubmit the manifests
-with `retry: true` to explicitly retry failed/interrupted/damaged extraction jobs;
-Prefect retries and result caching are disabled so the local store owns reuse.
+with `retry: true` to explicitly retry failed/interrupted/damaged extraction jobs.
+The local store owns retries and artifact reuse.
 
 Progress survives API restarts, but background execution is not a durable queue.
-Process termination can leave batches queued/running; inspect and resubmit them.
-An orchestration failure marks the batch failed with a sanitized error.
+On startup, persisted queued/running batches become failed with `batch_interrupted`.
+Their unfinished claims become failed with the same error, and totals are
+recomputed. Completed claims and their artifact references are preserved. This
+recovery is transactional and safe to repeat; terminal batches are unchanged.
+Nothing automatically resumes or rereads source documents. Inspect the saved
+progress and resubmit the manifests with `retry: true`: verified successful jobs
+are reused, and incomplete jobs get a new attempt. A crash after an artifact was
+committed but before batch progress was saved is also safe: resubmission finds
+and verifies that artifact. An execution failure marks unfinished claims and the
+batch failed with `batch_execution_failed`.
 Server-side failures use the `backend.diagnostics` Python logger at ERROR level
 with the original traceback, an operation name, and claim/batch IDs when available.
 Document failures also include document and page identifiers; shared lookup failures
@@ -136,10 +144,9 @@ and saved progress keep their sanitized error codes. Server logs can contain
 exception details and local paths; keep them private alongside the extraction store.
 One API process serializes batches with a local lock. Run a single API worker on
 a trusted local machine: this endpoint can read local manifest paths. Production
-hosting, distributed workers, restart recovery and concurrency tuning are deferred.
+hosting, distributed workers, automatic resume and concurrency tuning are deferred.
 
-The batch tests include a real Prefect flow in the main environment. That test
-requires local loopback access for Prefect's temporary server.
+Batch execution tests run without a separate service or local server.
 
 ## Review workspace
 
@@ -231,7 +238,7 @@ available in expandable sections.
 
 Lookup, recommendation requests, and batch submission show animated loading bars
 while awaiting an API response. Completed recommendation requests show ready and
-failed counts. Extraction batches show actual processed counts and percentages,
+failed counts. Extraction batches show terminal claim counts and percentages,
 with succeeded and failed counts listed separately. Loading bars do not invent intermediate percentages for
 requests that return all results at once. Motion is disabled when the device
 requests reduced animation.

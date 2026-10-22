@@ -48,7 +48,7 @@ class DiagnosticsTests(unittest.TestCase):
             store = LocalStore(Path(temporary))
             batch_id = create_batch(store, request)['batch_id']
             with self.assertLogs('backend.diagnostics', level='ERROR') as logs:
-                progress = process_batch(batch_id, request, store.root, extract)
+                progress = process_batch(batch_id, request, store, extract)
                 try:
                     raise RuntimeError('outside batch')
                 except RuntimeError:
