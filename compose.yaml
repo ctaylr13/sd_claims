@@ -1,0 +1,32 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    environment:
+      CLAIMS_CSV_PATH: ${DOCKER_CLAIMS_CSV_PATH:-/app/examples/claims.csv}
+      RECOMMENDATION_MODEL_PATH: ${DOCKER_RECOMMENDATION_MODEL_PATH:-}
+      RECOMMENDATION_MODEL_SHA256: ${DOCKER_RECOMMENDATION_MODEL_SHA256:-}
+      RECOMMENDATION_EVALUATION_PATH: ${DOCKER_RECOMMENDATION_EVALUATION_PATH:-}
+      RECOMMENDATION_EVALUATION_SHA256: ${DOCKER_RECOMMENDATION_EVALUATION_SHA256:-}
+    volumes:
+      - extraction:/app/cache
+      - ./data:/inputs:ro
+      - ./cache/review:/models:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  frontend:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  extraction:

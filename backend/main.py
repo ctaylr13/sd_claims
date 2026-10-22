@@ -1,4 +1,5 @@
 import json
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
@@ -37,6 +38,9 @@ def get_store(request: Request):
 
 
 def get_drive(request: Request):
+    if local_csv := os.getenv('CLAIMS_CSV_PATH'):
+        yield None, {'local_csv': local_csv}
+        return
     try:
         sources = load_sources()
         with authorization_lock:

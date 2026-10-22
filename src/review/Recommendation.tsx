@@ -10,11 +10,12 @@ export const Recommendation = ({ state, onGenerate, disabled }: { state: Recomme
   return <Panel>
     <Row><Heading>Recommendation</Heading><Badge>Research only</Badge></Row>
     <Copy>Verify the source documents and governing policy before making a claim decision.</Copy>
-    {busy && <WorkflowProgress label="Generating this recommendation" completed={null} total={1} detail="Checking the live inputs and running the research model." />}
+    {busy && <WorkflowProgress label="Generating this recommendation" completed={null} total={1} detail="Checking the current inputs and running the research model." />}
     {error && <Notice role="alert">{error}</Notice>}
     {data && <Stack>
       <Stat><Small>Conditional approved ceiling</Small><StatValue>{money(data.conditional_ceiling)}</StatValue><Copy>{data.ceiling_condition}</Copy></Stat>
-      <Notice>Suggested decision: {label(data.research_decision)}. This does not establish coverage or a payment amount.</Notice>
+      <Notice>Historical outcome prediction: {label(data.research_decision)}. This does not establish coverage or a payment amount.</Notice>
+      {data.research_decision === 'declined' && <Copy>A decline prediction is a review flag. Confirm the applicable policy clause and cited source evidence before deciding; missing evidence alone does not support a denial.</Copy>}
       {data.withholding_reasons.length > 0 && <Copy>Estimate withheld: {data.withholding_reasons.map(label).join('; ')}.</Copy>}
       <Details><Summary>What needs review · {data.review_reasons.length}</Summary><Stack>{data.review_reasons.map((reason, index) => <Copy key={index}>{label(reason)}</Copy>)}</Stack></Details>
       <Details><Summary>Estimate details and benchmarks</Summary><Stack><Copy>Ceiling: {label(data.ceiling_state)} · Bound: {label(data.ceiling_bound_state)}. Per-claim confidence is unavailable; this model is not calibrated for individual claims.</Copy><Definition><Term>Majority decision</Term><Value>{label(data.benchmarks.majority_decision)}</Value><Term>Training median ceiling</Term><Value>{money(data.benchmarks.training_median_ceiling)}</Value><Term>Recorded limit</Term><Value>{money(data.benchmarks.recorded_limit)}</Value><Term>Minimum request / limit</Term><Value>{money(data.benchmarks.minimum_request_limit)}</Value></Definition></Stack></Details>

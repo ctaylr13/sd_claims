@@ -13,6 +13,8 @@ security_deposit_claims.csv
 data
 cache
 local-backup
+environment-captures
+docs
 Security Deposit Itemization Documents*
 credentials
 secrets
