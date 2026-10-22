@@ -6,8 +6,8 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .experiment import canonical_id
 from .models import FrozenModel
+from .parsing import canonical_id
 
 KEY_ROLES = {
     'program_election': 'waiver', 'program_monthly_fee': 'waiver',

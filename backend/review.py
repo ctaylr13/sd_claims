@@ -36,7 +36,7 @@ def load_recommendation_model():
 
 
 def historical_comparison(claim, recommendation):
-    from .prediction.retrospective import APPROVAL_STATUSES, recorded_money
+    from .prediction.parsing import APPROVAL_STATUSES, recorded_money
 
     history = claim.get('historical_outcome', {})
     status = history.get('Status', '').strip()
@@ -71,7 +71,7 @@ def historical_comparison(claim, recommendation):
 
 
 def recommend_claim(claim, artifact, model_sha256):
-    from .prediction.experiment import canonical_id
+    from .prediction.parsing import canonical_id
     from .prediction.recommendations import ResearchInput, recommend
 
     claim_id = claim['tracking_number']

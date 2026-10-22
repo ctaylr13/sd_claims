@@ -7,7 +7,8 @@ from pydantic import ValidationError
 
 from backend.prediction.artifacts import ResearchModels, predict
 from backend.prediction.recommendation_comparison import compare, load_evidence, selected_arm, summary
-from backend.prediction.recommendations import fit_models, recommend
+from backend.prediction.recommendations import recommend
+from backend.prediction.recommendations_research import fit_models
 from backend.prediction.research_documents import ResearchFact, document_features
 from backend.prediction.retrospective import file_hash
 from test_recommendations import examples, request

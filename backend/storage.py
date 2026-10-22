@@ -16,6 +16,23 @@ def digest(content):
     return hashlib.sha256(content).hexdigest()
 
 
+def _file_digest(path):
+    hasher = hashlib.sha256()
+    with path.open('rb') as stream:
+        while chunk := stream.read(1024 * 1024):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _verify_artifacts(directory, inventory, paths):
+    for path in paths:
+        name = str(path.relative_to(directory))
+        if (name not in inventory or not path.resolve().is_relative_to(directory)
+                or _file_digest(path) != inventory[name]):
+            return False
+    return True
+
+
 class JobInProgress(RuntimeError):
     pass
 
@@ -60,10 +77,28 @@ class LocalStore:
         return json.loads(row['progress_json']) if row else None
 
     def result_for_attempt(self, attempt):
-        with self.connect() as connection:
-            row = connection.execute("SELECT * FROM jobs WHERE attempt = ? AND state = 'succeeded'",
-                                     (attempt,)).fetchone()
+        row = self._attempt(attempt)
         return self._result(row) if row else None
+
+    def artifact_for_attempt(self, attempt, select_artifacts):
+        row = self._attempt(attempt)
+        result = self._result(row, verify_all=False) if row else None
+        if result is None:
+            return None
+        paths = tuple(dict.fromkeys(select_artifacts(result)))
+        if not paths:
+            return None
+        try:
+            inventory = json.loads(row['inventory_json'])
+            directory = self.root / 'artifacts' / row['attempt']
+            return paths[-1] if _verify_artifacts(directory, inventory, paths) else None
+        except (OSError, TypeError, ValueError):
+            return None
+
+    def _attempt(self, attempt):
+        with self.connect() as connection:
+            return connection.execute("SELECT * FROM jobs WHERE attempt = ? AND state = 'succeeded'",
+                                      (attempt,)).fetchone()
 
     @contextmanager
     def connect(self):
@@ -80,18 +115,15 @@ class LocalStore:
             row = connection.execute('SELECT * FROM jobs WHERE key = ?', (key,)).fetchone()
         return dict(row) if row else None
 
-    def _result(self, row):
+    def _result(self, row, *, verify_all=True):
         try:
             directory = self.root / 'artifacts' / row['attempt']
             inventory = json.loads(row['inventory_json'])
             result = directory / row['result_path']
             if row['result_path'] not in inventory:
                 return None
-            for name, expected in inventory.items():
-                path = directory / name
-                if not path.resolve().is_relative_to(directory) or digest(path.read_bytes()) != expected:
-                    return None
-            return result
+            paths = (directory / name for name in inventory) if verify_all else (result,)
+            return result if _verify_artifacts(directory, inventory, paths) else None
         except (OSError, TypeError, ValueError):
             return None
 
@@ -137,7 +169,7 @@ class LocalStore:
                         path.chmod(0o600)
                         with path.open('rb') as stream:
                             os.fsync(stream.fileno())
-                        inventory[str(path.relative_to(directory))] = digest(path.read_bytes())
+                        inventory[str(path.relative_to(directory))] = _file_digest(path)
                     elif path.is_dir():
                         path.chmod(0o700)
                 if result_name not in inventory:

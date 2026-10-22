@@ -1,20 +1,9 @@
-from decimal import Decimal, InvalidOperation
-
 from .models import PredictionBundle
+from .parsing import money_value
 
 BASELINE_VERSION = 'review-first-1'
 MONEY_KEYS = frozenset({'monthly_rent', 'requested_amount', 'policy_limit', 'deposit_held',
                         'balance', 'total_charges', 'total_credits', 'total_deposits'})
-
-
-def money_value(value):
-    try:
-        amount = Decimal(value)
-        if not amount.is_finite() or amount < 0 or amount != amount.quantize(Decimal('.01')):
-            return None
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-    return amount
 
 
 def policy_limit(bundle):

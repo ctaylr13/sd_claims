@@ -6,8 +6,10 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .experiment import amount_metrics, canonical_id, classification_metrics
-from .recommendations import INPUT_COLUMNS, ResearchInput, code_hashes, fit_models, recommend
+from .experiment import amount_metrics, classification_metrics
+from .parsing import canonical_id
+from .recommendations import INPUT_COLUMNS, ResearchInput, code_hashes, recommend
+from .recommendations_research import fit_models
 from .research_documents import ResearchFact, document_features
 from .retrospective import TOLERANCE, estimators, file_hash, load_rows
 from .snapshots import digest

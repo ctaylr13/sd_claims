@@ -8,8 +8,9 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .experiment import canonical_id, classification_metrics
+from .experiment import classification_metrics
 from .models import FrozenModel
+from .parsing import canonical_id
 from .retrospective import evaluate_task, file_hash
 from .tuning import dataset
 
@@ -78,7 +79,8 @@ def protocol(root, review_path):
     return {'version': 'provisional-target-sensitivity-1',
         'review_sha256': file_hash(review_path), 'source_hashes': previous['source_hashes'],
         'method_code_hashes': {name: file_hash(Path(__file__).with_name(name)) for name in (
-            'outcomes.py', 'retrospective.py', 'tuning.py', 'experiment.py', 'baseline.py', 'models.py')},
+            'outcomes.py', 'retrospective.py', 'tuning.py', 'experiment.py', 'baseline.py', 'models.py',
+            'parsing.py', 'features.py')},
         'baseline_sha256': file_hash(root / 'recommendation-evaluation-v2.json'),
         'target': 'historical approvals versus documented denial hypotheses; administrative/mixed/unknown dispositions excluded',
         'methods': ['majority', 'logistic', 'logistic_balanced', 'shallow_tree', 'boosted_tree'],

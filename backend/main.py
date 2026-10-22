@@ -96,14 +96,15 @@ def batch_progress(batch_id: str, store: Annotated[LocalStore, Depends(get_store
     return require_batch(store, batch_id)
 
 
-def require_result(batch_id, index, store):
+def require_result(batch_id, index, store, *, select_artifacts=None):
     progress = require_batch(store, batch_id)
     if not 0 <= index < len(progress['results']):
         raise LookupError('claim_not_found', 404, 'Batch claim index not found')
     result = progress['results'][index]
     if result['state'] != 'succeeded':
         raise LookupError('result_unavailable', 409, 'Claim has no completed result')
-    path = store.result_for_attempt(result['attempt'])
+    path = (store.result_for_attempt(result['attempt']) if select_artifacts is None
+            else store.artifact_for_attempt(result['attempt'], select_artifacts))
     if path is None:
         raise LookupError('result_unavailable', 409, 'Result artifacts require an explicit retry')
     return path
@@ -144,20 +145,25 @@ def metrics():
 
 
 def retained_document(batch_id, index, document_index, store, page_number=None):
-    result = require_result(batch_id, index, store)
-    report = json.loads(result.read_text())
-    documents = report.get('documents', [])
-    if not 0 <= document_index < len(documents):
-        raise LookupError('document_not_found', 404, 'Document not found')
-    document = documents[document_index]['document']
-    original = document.get('original_path')
-    if page_number is not None:
-        page = next((page for page in document.get('pages', []) if page['number'] == page_number), {})
-        original = page.get('image_path')
-    path = Path(original).resolve() if original else None
-    if path is None or not path.is_relative_to(result.parent.resolve()) or not path.is_file():
-        raise LookupError('document_not_found', 404, 'Retained document or page unavailable')
-    return path
+    def select_artifacts(result):
+        report = json.loads(result.read_text())
+        documents = report.get('documents', [])
+        if not 0 <= document_index < len(documents):
+            raise LookupError('document_not_found', 404, 'Document not found')
+        document = documents[document_index]['document']
+        original = document.get('original_path')
+        selected = original
+        if page_number is not None:
+            page = next((page for page in document.get('pages', []) if page['number'] == page_number), {})
+            selected = page.get('image_path')
+        if not original or not selected:
+            raise LookupError('document_not_found', 404, 'Retained document or page unavailable')
+        paths = tuple(Path(value) for value in (original, selected))
+        if any(not path.resolve().is_relative_to(result.parent.resolve()) for path in paths):
+            raise LookupError('document_not_found', 404, 'Retained document or page unavailable')
+        return paths
+
+    return require_result(batch_id, index, store, select_artifacts=select_artifacts)
 
 
 @app.get('/api/batches/{batch_id}/claims/{index}/documents/{document_index}')
