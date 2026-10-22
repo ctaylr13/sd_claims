@@ -40,8 +40,8 @@ class BatchTests(unittest.TestCase):
         return extract_claim(manifest, Path(output_root), retry=retry)
 
     def test_failure_between_successes_and_verified_api_results(self):
-        def execute(batch_id, request, root):
-            process_batch(batch_id, request, root, self.extract)
+        def execute(batch_id, request, store):
+            process_batch(batch_id, request, store, self.extract)
 
         with patch('backend.main.run_batch', side_effect=execute):
             response = self.client.post('/api/batches', json=self.body)
@@ -77,7 +77,7 @@ class BatchTests(unittest.TestCase):
             return self.extract(manifest, root, retry)
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            pending = executor.submit(process_batch, progress['batch_id'], self.request, self.store.root, slow)
+            pending = executor.submit(process_batch, progress['batch_id'], self.request, self.store, slow)
             try:
                 self.assertTrue(started.wait(10))
                 current = self.client.get(f"/api/batches/{progress['batch_id']}").json()
@@ -92,7 +92,7 @@ class BatchTests(unittest.TestCase):
         attempts = []
         for _ in range(2):
             progress = create_batch(self.store, self.request)
-            result = process_batch(progress['batch_id'], self.request, self.store.root, self.extract)
+            result = process_batch(progress['batch_id'], self.request, self.store, self.extract)
             attempts.append(result['results'][0]['attempt'])
         self.assertEqual(attempts[0], attempts[1])
 
@@ -109,14 +109,14 @@ class BatchTests(unittest.TestCase):
 
         progress = create_batch(self.store, self.request)
         with patch('backend.extraction._extract_claim', side_effect=fail_one):
-            first = process_batch(progress['batch_id'], self.request, self.store.root, extract)
+            first = process_batch(progress['batch_id'], self.request, self.store, extract)
         self.assertEqual(first['results'][1]['error'], 'extraction_failed')
         progress = create_batch(self.store, self.request)
-        second = process_batch(progress['batch_id'], self.request, self.store.root, extract)
+        second = process_batch(progress['batch_id'], self.request, self.store, extract)
         self.assertEqual(second['results'][1]['error'], 'retry_required')
         self.request.retry = True
         progress = create_batch(self.store, self.request)
-        final = process_batch(progress['batch_id'], self.request, self.store.root, extract)
+        final = process_batch(progress['batch_id'], self.request, self.store, extract)
         self.assertEqual(final['succeeded'], 3)
         self.assertEqual(final['results'][0]['attempt'], first['results'][0]['attempt'])
 
@@ -135,26 +135,59 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         run.assert_not_called()
 
-    def test_flow_failure_is_persisted_and_sanitized(self):
+    def test_execution_failure_is_persisted_and_sanitized(self):
         progress = create_batch(self.store, self.request)
-        with patch('backend.flows.claim_batch_flow', side_effect=RuntimeError('private source')):
-            run_batch(progress['batch_id'], self.request, self.store.root)
+        with patch('backend.batches.process_batch', side_effect=RuntimeError('private source')):
+            with self.assertLogs('backend.diagnostics', level='ERROR') as logs:
+                run_batch(progress['batch_id'], self.request, self.store)
+        record, = logs.records
+        self.assertEqual((record.operation, record.batch_id), ('run_batch', progress['batch_id']))
+        self.assertIsNotNone(record.exc_info[2])
         saved = self.store.batch(progress['batch_id'])
         self.assertEqual(saved['state'], 'failed')
         self.assertEqual(saved['error'], 'batch_execution_failed')
+        self.assertEqual((saved['completed'], saved['failed']), (3, 3))
+        self.assertTrue(all(result['error'] == 'batch_execution_failed' for result in saved['results']))
         self.assertNotIn('private source', json.dumps(saved))
 
-    def test_real_prefect_flow_isolates_failure_and_reuses_results(self):
-        from prefect.testing.utilities import prefect_test_harness
+    def test_restart_marks_unfinished_claims_failed_and_explicit_retry_reuses_artifacts(self):
+        progress = create_batch(self.store, self.request)
+        committed = {}
 
-        self.enterContext(prefect_test_harness())
+        def interrupt(manifest, root, retry):
+            path = extract_claim(manifest, root, retry=retry)
+            committed[manifest.claim_id] = path.parent.name
+            if manifest.claim_id == 'broken':
+                raise KeyboardInterrupt()
+            return path
 
+        with self.assertRaises(KeyboardInterrupt):
+            process_batch(progress['batch_id'], self.request, self.store, interrupt)
+        with patch('backend.main.LocalStore', return_value=self.store):
+            with TestClient(app) as client:
+                recovered = client.get(f"/api/batches/{progress['batch_id']}").json()
+        self.assertEqual((recovered['state'], recovered['error']), ('failed', 'batch_interrupted'))
+        self.assertEqual((recovered['completed'], recovered['succeeded'], recovered['failed']), (3, 1, 2))
+        self.assertEqual(recovered['results'][0]['attempt'], committed['first'])
+        self.assertEqual([result['error'] for result in recovered['results'][1:]],
+                         ['batch_interrupted', 'batch_interrupted'])
+        self.assertEqual(self.client.get(f"/api/batches/{progress['batch_id']}/claims/0/result").status_code, 200)
+        self.request.retry = True
+        retried = create_batch(self.store, self.request)
+        run_batch(retried['batch_id'], self.request, self.store)
+        saved = self.store.batch(retried['batch_id'])
+        self.assertEqual(saved['succeeded'], 3)
+        self.assertEqual([result['attempt'] for result in saved['results'][:2]],
+                         [committed['first'], committed['broken']])
+        self.assertEqual(self.store.batch(progress['batch_id']), recovered)
+
+    def test_background_execution_isolates_failure_and_reuses_results(self):
         def extract(manifest, root, *, retry=False):
             if manifest.claim_id == 'broken':
                 raise RuntimeError('private-source-path')
             return extract_claim(manifest, root, retry=retry)
 
-        with patch('backend.flows.extract_claim', side_effect=extract):
+        with patch('backend.batches.extract_claim', side_effect=extract):
             response = self.client.post('/api/batches', json=self.body)
         self.assertEqual(response.status_code, 202)
         saved = self.store.batch(response.json()['batch_id'])

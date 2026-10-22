@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+from .diagnostics import log_exception
 from .drive import FOLDER_MIME, inventory_claim, list_children, read_claims
 
 INPUT_FIELDS = {
@@ -73,6 +74,7 @@ def lookup_claims(service, sources, tracking_numbers):
     try:
         index = load_claim_index(service, sources)
     except Exception:
+        log_exception('load_claim_index', claim_ids=tracking_numbers)
         return [_error_result(number, LookupError('source_unavailable', 502, SOURCE_UNAVAILABLE_MESSAGE))
                 for number in tracking_numbers]
     results = []
@@ -84,6 +86,7 @@ def lookup_claims(service, sources, tracking_numbers):
         except LookupError as error:
             results.append(_error_result(number, error))
         except Exception:
+            log_exception('lookup_claim', claim_id=number)
             results.append(_error_result(number, LookupError('source_unavailable', 502, SOURCE_UNAVAILABLE_MESSAGE)))
     return results
 

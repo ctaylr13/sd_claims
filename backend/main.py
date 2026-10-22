@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 from typing import Annotated
@@ -9,8 +10,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException
 
-from .batches import BatchProgress, BatchRequest, create_batch, run_batch
+from .batches import BatchProgress, BatchRequest, create_batch, fail_unfinished_batch, run_batch
 from .claims import LookupError, SOURCE_UNAVAILABLE_MESSAGE, lookup_claim, lookup_claims
+from .diagnostics import failure_context, log_exception
 from .drive import REPO_ROOT, connect_drive, load_sources
 from .schemas import BatchLookupRequest, BatchLookupResponse, ClaimResponse, ErrorResponse
 from .storage import LocalStore
@@ -18,21 +20,30 @@ from .review import batch_recommendations, claim_recommendation, evaluation_metr
 
 load_dotenv(REPO_ROOT / '.env')
 
-app = FastAPI(title='Claims lookup API', version='0.1.0')
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.store = LocalStore(REPO_ROOT / 'cache/extraction')
+    app.state.store.recover_batches(fail_unfinished_batch)
+    yield
+
+
+app = FastAPI(title='Claims lookup API', version='0.1.0', lifespan=lifespan)
 authorization_lock = Lock()
 
 
-def get_store():
-    return LocalStore(REPO_ROOT / 'cache/extraction')
+def get_store(request: Request):
+    return request.app.state.store
 
 
-def get_drive():
+def get_drive(request: Request):
     try:
         sources = load_sources()
         with authorization_lock:
             service = connect_drive(REPO_ROOT / 'credentials/drive-oauth-client.json',
                                     REPO_ROOT / 'secrets/drive-token.json', allow_interactive=False)
     except Exception:
+        log_exception('connect_drive', claim_id=request.path_params.get('tracking_number'))
         raise LookupError('source_unavailable', 502, SOURCE_UNAVAILABLE_MESSAGE) from None
     try:
         yield service, sources
@@ -42,7 +53,14 @@ def get_drive():
 
 @app.middleware('http')
 async def response_headers(request: Request, call_next):
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        log_exception('http_request', claim_id=request.path_params.get('tracking_number'),
+                      batch_id=request.path_params.get('batch_id'),
+                      claim_index=request.path_params.get('index'), method=request.method,
+                      route=request.scope.get('route').path if request.scope.get('route') else None)
+        raise
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
@@ -80,7 +98,7 @@ def health():
 def submit_batch(body: BatchRequest, background: BackgroundTasks,
                  store: Annotated[LocalStore, Depends(get_store)]):
     progress = create_batch(store, body)
-    background.add_task(run_batch, progress['batch_id'], body, store.root)
+    background.add_task(run_batch, progress['batch_id'], body, store)
     return progress
 
 
@@ -131,12 +149,14 @@ def claim_lookup(tracking_number: str, drive: Annotated[tuple, Depends(get_drive
     except LookupError:
         raise
     except Exception:
+        log_exception('lookup_claim', claim_id=tracking_number)
         raise LookupError('source_unavailable', 502, SOURCE_UNAVAILABLE_MESSAGE) from None
 
 
 @app.post('/api/claims/{tracking_number}/recommendation')
 def recommendation(tracking_number: str, drive: Annotated[tuple, Depends(get_drive)]):
-    return claim_recommendation(lookup_claim(*drive, tracking_number))
+    with failure_context(claim_id=tracking_number):
+        return claim_recommendation(lookup_claim(*drive, tracking_number))
 
 
 @app.get('/api/review/metrics')

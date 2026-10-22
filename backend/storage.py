@@ -76,6 +76,16 @@ class LocalStore:
             row = connection.execute('SELECT progress_json FROM batches WHERE id = ?', (batch_id,)).fetchone()
         return json.loads(row['progress_json']) if row else None
 
+    def recover_batches(self, fail_unfinished_batch):
+        with self.connect() as connection:
+            for row in connection.execute('SELECT id, progress_json FROM batches').fetchall():
+                progress = json.loads(row['progress_json'])
+                if progress['state'] not in ('queued', 'running'):
+                    continue
+                fail_unfinished_batch(progress, 'batch_interrupted')
+                connection.execute('UPDATE batches SET progress_json = ? WHERE id = ?',
+                                   (canonical_bytes(progress).decode(), row['id']))
+
     def result_for_attempt(self, attempt):
         row = self._attempt(attempt)
         return self._result(row) if row else None
