@@ -17,6 +17,12 @@ The request key covers document SHA-256 hashes, source references and versions,
 claim/document IDs, parser/schema/config versions, extraction tool versions, and
 all manifest settings (including forced OCR pages, effective date, and recorded
 request citations). Extraction parses the captured bytes used for that key.
+PDFs are captured and hashed in chunks into a private temporary directory, then
+processed sequentially from those files. Temporary captures are removed when the
+request finishes, including cache hits and failures. Each claim supports at most
+20 documents, each PDF at most 50 MiB, and combined PDFs at most 200 MiB. Size
+limits are checked while capturing, before any PDF is parsed; exceeding a limit
+rejects the claim. Retained originals and page artifacts remain in the local store.
 Bump `PARSER_VERSION` when rules change, `CONFIG_VERSION` when extraction defaults
 change, and `SCHEMA_VERSION` when report structure changes. Tool versions are
 collected automatically. Source IDs/versions must be supplied in the manifest;

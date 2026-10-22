@@ -218,9 +218,9 @@ class ExtractionStorageTests(unittest.TestCase):
                 path=str(source), document_id='doc', kind='lease')])
             from backend.extraction.pdf import extract_pdf
 
-            def replace_source(item, directory, *, content, tools):
+            def replace_source(item, directory, *, captured_path, tools):
                 source.write_bytes(b'new bytes')
-                return extract_pdf(item, directory, content=content, tools=tools)
+                return extract_pdf(item, directory, captured_path=captured_path, tools=tools)
 
             with patch('backend.extraction.extract_pdf', side_effect=replace_source):
                 result = extract_claim(manifest, root / 'store')
