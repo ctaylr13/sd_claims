@@ -1,6 +1,6 @@
 import json
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from threading import Lock
 from typing import Annotated
@@ -15,6 +15,7 @@ from .batches import BatchProgress, BatchRequest, create_batch, fail_unfinished_
 from .claims import LookupError, SOURCE_UNAVAILABLE_MESSAGE, lookup_claim, lookup_claims
 from .diagnostics import failure_context, log_exception
 from .drive import REPO_ROOT, connect_drive, load_sources
+from .local_evidence import evidence_file
 from .schemas import BatchLookupRequest, BatchLookupResponse, ClaimResponse, ErrorResponse
 from .storage import LocalStore
 from .review import batch_recommendations, claim_recommendation, evaluation_metrics
@@ -37,9 +38,10 @@ def get_store(request: Request):
     return request.app.state.store
 
 
-def get_drive(request: Request):
+@contextmanager
+def source_connection(report_failure=False, claim_id=None):
     if local_csv := os.getenv('CLAIMS_CSV_PATH'):
-        yield None, {'local_csv': local_csv}
+        yield None, {'local_csv': local_csv, 'local_evidence_root': os.getenv('CLAIMS_EVIDENCE_ROOT', '')}
         return
     try:
         sources = load_sources()
@@ -47,12 +49,34 @@ def get_drive(request: Request):
             service = connect_drive(REPO_ROOT / 'credentials/drive-oauth-client.json',
                                     REPO_ROOT / 'secrets/drive-token.json', allow_interactive=False)
     except Exception:
-        log_exception('connect_drive', claim_id=request.path_params.get('tracking_number'))
-        raise LookupError('source_unavailable', 502, SOURCE_UNAVAILABLE_MESSAGE) from None
+        inputs = Path('/inputs') if Path('/inputs').is_dir() else REPO_ROOT / 'data'
+        local = ({'local_csv': str(inputs / 'claims.csv'), 'local_evidence_root': str(inputs / 'evidence')}
+                 if (inputs / 'claims.csv').is_file() else None)
+        if report_failure and local is None:
+            log_exception('connect_drive', claim_id=claim_id)
+        yield None, local
+        return
     try:
         yield service, sources
     finally:
         service.close()
+
+
+def get_drive(request: Request):
+    with source_connection(report_failure=True, claim_id=request.path_params.get('tracking_number')) as source:
+        if source[1] is None:
+            raise LookupError('source_unavailable', 502, 'Place claims.csv in the local data folder or check Google Drive authorization')
+        yield source
+
+
+@app.get('/api/source')
+def source_status():
+    with source_connection() as (service, sources):
+        if sources is None:
+            return {'mode': 'disconnected', 'name': None}
+        if service is not None:
+            return {'mode': 'drive', 'name': 'Google Drive'}
+        return {'mode': 'local', 'name': Path(sources['local_csv']).name}
 
 
 @app.middleware('http')
@@ -155,6 +179,16 @@ def claim_lookup(tracking_number: str, drive: Annotated[tuple, Depends(get_drive
     except Exception:
         log_exception('lookup_claim', claim_id=tracking_number)
         raise LookupError('source_unavailable', 502, SOURCE_UNAVAILABLE_MESSAGE) from None
+
+
+@app.get('/api/claims/{tracking_number}/evidence/{relative_path:path}')
+def local_document(tracking_number: str, relative_path: str):
+    with source_connection() as (service, sources):
+        root = sources.get('local_evidence_root') if sources and service is None else None
+        path = evidence_file(root, tracking_number, relative_path) if root else None
+    if path is None:
+        raise LookupError('document_not_found', 404, 'Local PDF not found')
+    return FileResponse(path, media_type='application/pdf', filename=path.name, content_disposition_type='inline')
 
 
 @app.post('/api/claims/{tracking_number}/recommendation')

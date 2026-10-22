@@ -1,14 +1,20 @@
 # Configuration and limitations
 
-See the [README](../README.md) for Docker, local startup, Drive authorization and
-test commands.
+See the [README](../README.md) for quick startup and the [setup guide](setup.md)
+for local development, downloaded files, and Google Drive authorization.
 
 ## Claim sources and document review
 
-`CLAIMS_CSV_PATH` selects a local CSV; leave it empty for Drive. Use
+`CLAIMS_CSV_PATH` selects a specific local CSV. Leave it empty to prefer
+Google Drive, falling back to `data/claims.csv` and `data/evidence/` when Drive
+is unavailable (`/inputs/claims.csv` and `/inputs/evidence/` in Docker).
+`/api/source` reports the selected source or the need for setup. Use
 `examples/claims.csv` for the column names. Lookups reread the source, keeping
 recorded inputs separate from historical outcomes. CSV versions use a content
-hash; CSV mode has no Drive evidence links.
+hash. Set `CLAIMS_EVIDENCE_ROOT` to attach downloaded PDFs from subfolders named
+for each tracking number; see the [downloaded files walkthrough](setup.md#use-downloaded-claims-and-pdfs).
+Local PDF links serve files only inside the matching claim folder, skip symlinks,
+and are disabled in Drive mode. CSV mode has no Drive evidence links.
 
 Paste a manifest into Document review or submit it to `POST /api/batches`:
 

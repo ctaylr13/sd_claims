@@ -1,0 +1,5 @@
+services:
+  backend:
+    environment:
+      CLAIMS_CSV_PATH: /inputs/claims.csv
+      CLAIMS_EVIDENCE_ROOT: /inputs/evidence
