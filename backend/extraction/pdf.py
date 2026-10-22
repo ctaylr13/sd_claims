@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pdfplumber
 
+from backend.diagnostics import log_exception
+
 from .capture import MAX_FILE_BYTES, ExtractionLimitExceeded, capture_pdf
 from .models import Document, DocumentInput, Page, Word
 
@@ -87,6 +89,7 @@ def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, conte
                     page.native_words = page.words[:]
                     page.native_text = ' '.join(word.text for word in page.words)
                 except Exception as error:
+                    log_exception('native_text_failed', document_id=item.document_id, page_number=index)
                     page.errors.append(f'native_text_failed:{type(error).__name__}')
                 try:
                     image = source_page.to_image(resolution=200, force_mediabox=True).original
@@ -96,6 +99,7 @@ def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, conte
                     page.image_size = image.size
                     page.image_to_page_scale = (page.width/image.width, page.height/image.height)
                 except Exception as error:
+                    log_exception('render_failed', document_id=item.document_id, page_number=index)
                     page.errors.append(f'render_failed:{type(error).__name__}')
                 reason = fallback_reason(source_page, page.words)
                 if index in item.force_ocr_pages or reason:
@@ -107,6 +111,7 @@ def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, conte
                         try:
                             page.words = ocr(Path(page.image_path), page.width, page.height, page.image_size)
                         except Exception as error:
+                            log_exception('ocr_failed', document_id=item.document_id, page_number=index)
                             page.errors.append(f'ocr_failed:{type(error).__name__}')
                     if not text_usable(page.words):
                         page.state = 'unreadable'
@@ -120,8 +125,10 @@ def extract_pdf(item: DocumentInput, artifact_dir: Path, *, ocr=ocr_words, conte
                         page.table_cells = [(cell[0]-x0, cell[1]-y0, cell[2]-x0, cell[3]-y0)
                                             for table in source_page.find_tables() for cell in table.cells]
                     except Exception as error:
+                        log_exception('table_geometry_failed', document_id=item.document_id, page_number=index)
                         page.errors.append(f'table_geometry_failed:{type(error).__name__}')
                         page.state = 'partial'
     except Exception as error:
+        log_exception('pdf_read_failed', document_id=item.document_id)
         doc.errors.append(f'pdf_read_failed:{type(error).__name__}')
     return doc

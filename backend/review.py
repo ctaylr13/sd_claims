@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from .claims import LookupError
+from .diagnostics import failure_context, log_exception
 from .schemas import EvaluationMetrics
 
 
@@ -17,6 +18,7 @@ def configured_artifact(name):
             raise ValueError('Artifact changed')
         return json.loads(raw)
     except (OSError, ValueError):
+        log_exception('verify_review_artifact')
         raise LookupError('review_unavailable', 503, 'Configured review artifact failed verification') from None
 
 
@@ -30,8 +32,10 @@ def load_recommendation_model():
             raise ValueError('Model code changed')
         return artifact, os.environ['RECOMMENDATION_MODEL_SHA256']
     except ImportError:
+        log_exception('import_recommendation_model')
         raise LookupError('review_unavailable', 503, 'Install requirements-prediction.txt to enable research recommendations') from None
     except (ValueError, KeyError, TypeError):
+        log_exception('validate_recommendation_model')
         raise LookupError('review_unavailable', 503, 'Research model is incompatible; refit and verify it before use') from None
 
 
@@ -93,7 +97,8 @@ def claim_recommendation(claim):
 def batch_recommendations(lookups):
     found = any(item['state'] == 'found' for item in lookups)
     try:
-        model = load_recommendation_model() if found else None
+        with failure_context(claim_ids=[item['tracking_number'] for item in lookups if item['state'] == 'found']):
+            model = load_recommendation_model() if found else None
     except LookupError as error:
         model = error
     results = []
@@ -111,6 +116,7 @@ def batch_recommendations(lookups):
             results.append({'tracking_number': number, 'state': 'error',
                             'error': {'code': error.code, 'message': str(error)}})
         except Exception:
+            log_exception('recommend_claim', claim_id=number)
             results.append({'tracking_number': number, 'state': 'error',
                             'error': {'code': 'recommendation_failed', 'message': 'Recommendation failed; retry this claim'}})
     return {'results': results}
@@ -123,4 +129,5 @@ def evaluation_metrics():
             raise ValueError('Unsupported evaluation scope')
         return EvaluationMetrics.model_validate(report).model_dump()
     except (ValueError, KeyError, TypeError):
+        log_exception('validate_evaluation_metrics')
         raise LookupError('review_unavailable', 503, 'Configure a recommendations evaluate report with development-only aggregate metrics') from None

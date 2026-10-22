@@ -44,7 +44,11 @@ class ApiTests(unittest.TestCase):
 
     def test_source_error_is_sanitized(self):
         self.read.side_effect = RuntimeError('private-token')
-        response = self.client.get('/api/claims/001')
+        with self.assertLogs('backend.diagnostics', level='ERROR') as logs:
+            response = self.client.get('/api/claims/001')
+        record, = logs.records
+        self.assertEqual((record.operation, record.claim_id), ('lookup_claim', '001'))
+        self.assertIsNotNone(record.exc_info[2])
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()['error']['code'], 'source_unavailable')
         self.assertNotIn('private-token', response.text)
@@ -53,7 +57,11 @@ class ApiTests(unittest.TestCase):
     def test_auth_failure_is_sanitized_without_blocking_health(self):
         app.dependency_overrides.clear()
         with patch('backend.main.connect_drive', side_effect=RuntimeError('private-token')):
-            response = self.client.get('/api/claims/001')
+            with self.assertLogs('backend.diagnostics', level='ERROR') as logs:
+                response = self.client.get('/api/claims/001')
+            record, = logs.records
+            self.assertEqual((record.operation, record.claim_id), ('connect_drive', '001'))
+            self.assertIsNotNone(record.exc_info[2])
             self.assertEqual(response.status_code, 502)
             self.assertNotIn('private-token', response.text)
             self.assertEqual(self.client.get('/api/health').status_code, 200)
@@ -107,7 +115,11 @@ class ApiTests(unittest.TestCase):
 
     def test_shared_batch_failure_returns_errors_for_each_claim(self):
         self.read.side_effect = RuntimeError('private-token')
-        response = self.client.post('/api/claims/lookup', json={'tracking_numbers': ['001', '002']})
+        with self.assertLogs('backend.diagnostics', level='ERROR') as logs:
+            response = self.client.post('/api/claims/lookup', json={'tracking_numbers': ['001', '002']})
+        record, = logs.records
+        self.assertEqual((record.operation, record.claim_ids), ('load_claim_index', ['001', '002']))
+        self.assertIsNotNone(record.exc_info[2])
         result = response.json()
         self.assertEqual(result['failed'], 2)
         self.assertEqual([r['http_status'] for r in result['results']], [502, 502])

@@ -138,7 +138,11 @@ class BatchTests(unittest.TestCase):
     def test_flow_failure_is_persisted_and_sanitized(self):
         progress = create_batch(self.store, self.request)
         with patch('backend.flows.claim_batch_flow', side_effect=RuntimeError('private source')):
-            run_batch(progress['batch_id'], self.request, self.store.root)
+            with self.assertLogs('backend.diagnostics', level='ERROR') as logs:
+                run_batch(progress['batch_id'], self.request, self.store.root)
+        record, = logs.records
+        self.assertEqual((record.operation, record.batch_id), ('run_batch', progress['batch_id']))
+        self.assertIsNotNone(record.exc_info[2])
         saved = self.store.batch(progress['batch_id'])
         self.assertEqual(saved['state'], 'failed')
         self.assertEqual(saved['error'], 'batch_execution_failed')

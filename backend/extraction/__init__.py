@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from backend.diagnostics import failure_context, log_exception
 from backend.storage import LocalStore
 
 from .capture import MAX_DOCUMENTS, MAX_TOTAL_BYTES, ExtractionLimitExceeded, capture_pdf
@@ -33,6 +34,7 @@ def extract_claim(manifest: Manifest, output_root: Path, *, retry=False):
                 sha256, size = capture_pdf(Path(item.path), captured, remaining_bytes=MAX_TOTAL_BYTES-total_bytes)
                 total_bytes += size
             except OSError:
+                log_exception('capture_document', claim_id=manifest.claim_id, document_id=item.document_id)
                 captured = None
                 sha256 = None
             sources.append(captured)
@@ -54,14 +56,17 @@ def _extract_claim(manifest: Manifest, run_dir: Path, sources, tools):
         try:
             if sources[index] is None:
                 raise OSError('Source unavailable when request was captured')
-            doc = extract_pdf(item, run_dir / f'document-{index+1}', captured_path=sources[index], tools=tools)
+            with failure_context(claim_id=manifest.claim_id):
+                doc = extract_pdf(item, run_dir / f'document-{index+1}', captured_path=sources[index], tools=tools)
         except OSError as error:
+            log_exception('extract_document', claim_id=manifest.claim_id, document_id=item.document_id)
             doc = Document(document_id=item.document_id, kind=item.kind, sha256=None, original_path=None,
                            source={**item.source, 'requested_local_path': item.path},
                            errors=[f'source_read_failed:{type(error).__name__}'])
         try:
             documents.append(PARSERS[item.kind](doc))
         except Exception as error:
+            log_exception('parse_document', claim_id=manifest.claim_id, document_id=item.document_id)
             doc.errors.append(f'parser_failed:{type(error).__name__}')
             documents.append(DocumentFacts(document=doc, fields=shared_fields(doc), limitations=[
                 'Parser failed; document requires review',

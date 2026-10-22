@@ -8,6 +8,7 @@ from prefect.settings import (PREFECT_API_KEY, PREFECT_API_URL, PREFECT_HOME,
                               temporary_settings)
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .diagnostics import failure_context, log_exception
 from .extraction.models import Manifest
 from .storage import JobInProgress, LocalStore, RetryRequired
 
@@ -64,10 +65,12 @@ def process_batch(batch_id, request, output_root, extract):
         result['state'] = 'running'
         store.save_batch(progress)
         try:
-            path = Path(extract(manifest, output_root, request.retry))
+            with failure_context(batch_id=batch_id, claim_id=manifest.claim_id):
+                path = Path(extract(manifest, output_root, request.retry))
             result.update(state='succeeded', attempt=path.parent.name)
             progress['succeeded'] += 1
         except Exception as error:
+            log_exception('extract_claim', batch_id=batch_id, claim_id=manifest.claim_id)
             code = ('job_in_progress' if isinstance(error, JobInProgress) else
                     'retry_required' if isinstance(error, RetryRequired) else 'extraction_failed')
             result.update(state='failed', error=code)
@@ -91,6 +94,7 @@ def run_batch(batch_id, request, output_root):
             }):
                 claim_batch_flow(batch_id, request, str(output_root))
         except Exception:
+            log_exception('run_batch', batch_id=batch_id)
             store = LocalStore(output_root)
             progress = store.batch(batch_id)
             progress.update(state='failed', error='batch_execution_failed')

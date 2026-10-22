@@ -127,6 +127,13 @@ Prefect retries and result caching are disabled so the local store owns reuse.
 Progress survives API restarts, but background execution is not a durable queue.
 Process termination can leave batches queued/running; inspect and resubmit them.
 An orchestration failure marks the batch failed with a sanitized error.
+Server-side failures use the `backend.diagnostics` Python logger at ERROR level
+with the original traceback, an operation name, and claim/batch IDs when available.
+Document failures also include document and page identifiers; shared lookup failures
+include the requested claim IDs. The same context is attached as log-record fields
+for structured handlers and included in the default text output. Client responses
+and saved progress keep their sanitized error codes. Server logs can contain
+exception details and local paths; keep them private alongside the extraction store.
 One API process serializes batches with a local lock. Run a single API worker on
 a trusted local machine: this endpoint can read local manifest paths. Production
 hosting, distributed workers, restart recovery and concurrency tuning are deferred.
