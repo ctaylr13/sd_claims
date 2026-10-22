@@ -74,3 +74,6 @@ Docker publishes it only on localhost. The API can read local manifest paths.
 
 [Configuration and limitations](documentation/reference.md) covers document review,
 caching, recovery, private model setup, and research boundaries.
+
+<img width="2260" height="1595" alt="image" src="https://github.com/user-attachments/assets/e5e626ac-dc61-4b4b-9265-394f875e8abc" />
+
